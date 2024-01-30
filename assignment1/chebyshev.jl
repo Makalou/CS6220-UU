@@ -32,7 +32,7 @@ for num_of_node in num_of_nodes
     end_time = time_ns();
     time= end_time - start_time;
     push!(errors1,relative_l2(f,p))
-    push!(times1, log(time/1e3))
+    push!(times1, cbrt(time/1e3))
     println("float32",size(Vandermonde_chebyshev), size(samples_chebyshev),size(coefficients_chebyshev))
 end
 
@@ -45,7 +45,7 @@ for num_of_node in num_of_nodes
     end_time = time_ns();
     time= end_time - start_time;
     push!(errors2,relative_l2(f,p))
-    push!(times2, log(time/1e3))
+    push!(times2, cbrt(time/1e3))
     println("float64",size(Vandermonde_chebyshev), size(samples_chebyshev),size(coefficients_chebyshev))
 end
 
@@ -58,7 +58,7 @@ for num_of_node in num_of_nodes
     end_time = time_ns();
     time= end_time - start_time;
     push!(errors3,relative_l2(f,p))
-    push!(times3, log(time/1e3))
+    push!(times3, cbrt(time/1e3))
     println("big float",size(Vandermonde_chebyshev), size(samples_chebyshev),size(coefficients_chebyshev))
 end
 
