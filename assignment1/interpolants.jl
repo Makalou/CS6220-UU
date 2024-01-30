@@ -16,8 +16,10 @@ function get_interpolant(num_points,target_function,generator)
     return interpo
 end
 
-poly_interpolant_equispace = get_interpolant(9,runge,MyUtil.equispacef32)
-poly_interpolant_chebyshev = get_interpolant(9,runge,MyUtil.chebyshevf32)
+num_of_nodes = 50
+
+poly_interpolant_equispace = get_interpolant(num_of_nodes,runge,MyUtil.equispacef32)
+poly_interpolant_chebyshev = get_interpolant(num_of_nodes,runge,MyUtil.chebyshevf32)
 
 # Test the interpolant at some points
 test_points = range(-2.0, stop=2.0, length=100)

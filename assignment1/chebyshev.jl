@@ -31,4 +31,7 @@ end
 plt = plot(num_of_nodes, errors, label="errors", xlabel="num of nodes", ylabel="y", title="Accuracy Vs Error")
 plot!(plt,num_of_nodes, times, label="times")
 display(plt)
+
+# Prevent process close too soon
+# Presse enter or use ctrl + C to exit the process
 readline()
