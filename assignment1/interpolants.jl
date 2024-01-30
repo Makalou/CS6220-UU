@@ -22,17 +22,17 @@ poly_interpolant_equispace = get_interpolant(num_of_nodes,runge,MyUtil.equispace
 poly_interpolant_chebyshev = get_interpolant(num_of_nodes,runge,MyUtil.chebyshevf32)
 
 # Test the interpolant at some points
-test_points = range(-2.0, stop=2.0, length=100)
+test_points = range(-2.0, stop=2.0, length=1000)
 
-plt = plot(test_points, runge.(test_points), label="Runge function", xlabel="x", ylabel="y", title="Polynomial Interpolation")
-plot!(plt,test_points, poly_interpolant_equispace.(test_points), label="Polynomial Interpolant Equispace", xlabel="x", ylabel="y", title="Polynomial Interpolation")
-plot!(plt,test_points, poly_interpolant_chebyshev.(test_points), label="Polynomial Interpolant chebyshev", xlabel="x", ylabel="y", title="Polynomial Interpolation")
+plt = plot(test_points, runge.(test_points), label="Runge function", xlabel="x", ylabel="y", title="Polynomial Interpolation N = $num_of_nodes")
+plot!(plt,test_points, poly_interpolant_equispace.(test_points),label="EquispaceF32")
+plot!(plt,test_points, poly_interpolant_chebyshev.(test_points),label="ChebyshevF32")
 ylims!(plt,(-0.25, 1.25)) 
-display(plt)
+savefig("N$num_of_nodes F32.png")
 
 # Prevent process close too soon
 # Presse enter or use ctrl + C to exit the process
-readline()
+# readline()
 
 
 
