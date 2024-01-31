@@ -9,6 +9,7 @@ I choose Julia language because:
 ## Running Instruction
 First you need to install Julia
 On MacOS, you can install Julia via [homebrew](https://brew.sh/)
+<<<<<<< HEAD
 ```shell
 brew install julia
 ```
