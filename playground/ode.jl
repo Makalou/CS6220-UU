@@ -100,8 +100,8 @@ plot!(plt,t,y_bdf2, label = "BDF2")
 plot!(plt,t,y_rk2, label = "RK2")
 plot!(plt,t,y_rk4, label = "RK4")
 
-display(plt)
+savefig(plt,"result.png")
 
 # Prevent process close too soon
 # Presse enter or use ctrl + C to exit the process
-readline()
+# readline()
