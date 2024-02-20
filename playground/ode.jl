@@ -4,7 +4,7 @@ using Plots
 include("solver.jl")
 using .MySolver
 
-f(t,y) = sin(y)
+f(t,y) = sin(y^2)
 
 y_0 = 1.0
 c = log(cot(0.5*y_0))
@@ -22,7 +22,7 @@ y_rk4 = [y_0]
 y_ground_truth = [y_0]
 
 y_n = y_0
-delta_t = 2.0
+delta_t = 1.0
 t = [i * delta_t for i in 0:25]
 
 for n in range(1,length(t)-1)
@@ -44,15 +44,16 @@ for n in range(1,length(t)-1)
     end
 end
 
-plt = plot(t, y_ground_truth, label = "Ground Truth",title="Solve dydt = siny(dt = $delta_t)")
-plot!(plt,t,y_ab1, label = "AB1")
-plot!(plt,t,y_am1, label = "AM1")
+#plt = plot(t, y_ground_truth, label = "Ground Truth",title="Solve dydt = siny(dt = $delta_t)")
+plt = plot(label = "Ground Truth",title="Solve dydt = siny(dt = $delta_t)")
+plot!(plt,t,y_ab1, label = "AB1(Explicit Euler)", shape = :circle)
+plot!(plt,t,y_am1, label = "AM1(Implicit Euler)", shape = :square)
 plot!(plt,t,y_ab2, label = "AB2")
-plot!(plt,t,y_am2, label = "AM2")
-plot!(plt,t,y_abam2pc, label = "AB-AM2 Predictor Correction")
+plot!(plt,t,y_am2, label = "AM2", shape = :circle)
+plot!(plt,t,y_abam2pc, label = "AB-AM2 Predictor Correction",shape = :square)
 plot!(plt,t,y_bdf2, label = "BDF2")
-plot!(plt,t,y_rk2, label = "RK2")
-plot!(plt,t,y_rk4, label = "RK4")
+plot!(plt,t,y_rk2, label = "Explicit RK2",shape = :circle)
+plot!(plt,t,y_rk4, label = "Explicit RK4", shape = :square)
 
 display(plt)
 
