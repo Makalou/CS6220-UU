@@ -26,12 +26,16 @@ w6 = 32pi
 w7 = 64pi
 w8 = 128pi
 
-u(x) = sin(w1 *x) + sin(w2 * x) + sin(w3 * x) + sin(w4 * x) + sin(w5 * x) + sin(w6 * x) + sin(w7* x) + sin(w8 * x)
-f(x) = (w1)^2 * sin(w1*x) + (w2)^2 * sin(w2*x) + (w3)^2 * sin(w3*x) + (w4)^2 * sin(w4*x) + (w5)^2 * sin(w5*x) + (w6)^2 * sin(w6*x) + (w7)^2 * sin(w7*x) + (w8)^2 * sin(w8*x)
+u(x) = sin(w1 *x) + sin(w2 * x) + sin(w3 * x) + sin(w4 * x) + sin(w5 * x)
+f(x) = (w1)^2 * sin(w1*x) + (w2)^2 * sin(w2*x) + (w3)^2 * sin(w3*x) + (w4)^2 * sin(w4*x) + (w5)^2 * sin(w5*x)
 
 frame = 0
 
-for n in 20 : 2000 # Number of extrema (degree of the Chebyshev polynomial)
+ns = []
+l2s = []
+linfs = []
+
+for n in 20 : 200 # Number of extrema (degree of the Chebyshev polynomial)
     extrema = nodes(n,:chebyshev_extrema).points
     
     Tmat = zeros(n,n)
@@ -68,14 +72,20 @@ for n in 20 : 2000 # Number of extrema (degree of the Chebyshev polynomial)
         plot!(plt,test_x, u_1.(test_x))
         savefig(plt,"res/res_$n.png")
     end
-    #display(plt)
-    # Prevent process close too soon
-    # Presse enter or use ctrl + C to exit the process
-    #readline()
     println("n = $n")
     u_ref = u.(test_x)
     error = u_ref  - u_1.(test_x)
-    println(norm(error,2)/norm(u_ref,2))
-    println(norm(error,Inf)/norm(u_ref,Inf))
+    l2e = norm(error,2)/norm(u_ref,2)
+    linfe = norm(error,Inf)/norm(u_ref,Inf)
+    println(l2e)
+    println(linfe)
+    push!(ns,n)
+    push!(l2s,l2e)
+    push!(linfs,linfe)
     global frame = (frame + 1) % 100
 end
+
+plt = plot(ns,l2s,title = "N vs L2 Error", ylabel = "relative l2 error", xlabel = "number of points")
+savefig(plt,"res/l2error.png")
+plt = plot(ns,linfs,title = "N vs Linf Error", ylabel = "relative linf error", xlabel = "number of points")
+savefig(plt,"res/linferror.png")
