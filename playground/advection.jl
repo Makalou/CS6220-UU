@@ -40,6 +40,18 @@ function advect_upwind2(q1,q2,dt,dx)
     end
 end
 
+function advect_lf(q1,q2,dt,dx)
+    for i in 2 : 999
+        q2[i] = 0.5 *(q1[i + 1] + q1[i - 1]) - dt * u * (q1[i + 1] - q1[i-1]) / ( 2 * dx)
+    end
+end
+
+function advect_lw(q1,q2,dt,dx)
+    for i in 2 : 999
+        q2[i] = q1[i] - dt * u * (q1[i + 1] - q1[i-1]) / ( 2 * dx) + dt^2 * u^2 * (q1[i + 1] - 2*q1[i] + q1[i-1]) / (2 * dx^2)
+    end
+end
+
 qn = q0.(x_domain)
 anim_ftcs = @animate for t in t_values
     # Evaluate the function for the current time step
@@ -64,8 +76,26 @@ anim_upwind2 = @animate for t in t_values
     plot(x_domain, qn1)
 end
 
+qn = q0.(x_domain)
+anim_lf = @animate for t in t_values
+    # Evaluate the function for the current time step
+    advect_lf(qn,qn1,dt,dx)
+    advect_lf(qn1,qn,dt,dx)
+    plot(x_domain, qn1)
+end
+
+qn = q0.(x_domain)
+anim_lw = @animate for t in t_values
+    # Evaluate the function for the current time step
+    advect_lw(qn,qn1,dt,dx)
+    advect_lw(qn1,qn,dt,dx)
+    plot(x_domain, qn1)
+end
+
 # Save the animation as a GIF
 gif(anim_ftcs, "1d_advection_ftcs.gif", fps = 60)
 gif(anim_upwind1, "1d_advection_upwind1.gif", fps = 60)
 gif(anim_upwind2, "1d_advection_upwind2.gif", fps = 60)
+gif(anim_lf, "1d_advection_lf.gif", fps = 60)
+gif(anim_lf, "1d_advection_lw.gif", fps = 60)
 
