@@ -140,21 +140,21 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                 v_n_left = v_n_right = v_n_down = v_n_up = 0.0
                 v_n_1_left = v_n_1_right = v_n_1_down = v_n_1_up = 0.0
 
-                u_rhs[i,j] = 0
-                v_rhs[i,j] = 0
+                @inbounds u_rhs[i,j] = 0
+                @inbounds v_rhs[i,j] = 0
 
                 if i == 1 
                     u_n_left = u(x - h,y,tn) # Use Dirichelet boundary condition
                     v_n_left = v(x - h,y,tn) 
                     u_n_1_left = u(x - h, y, tn - dt)
                     v_n_1_left = v(x - h, y, tn - dt)
-                    u_rhs[i,j] += beta * u(x - h, y, tn + dt) 
-                    v_rhs[i,j] += beta * v(x - h, y, tn + dt)
+                    @inbounds u_rhs[i,j] += beta * u(x - h, y, tn + dt) 
+                    @inbounds v_rhs[i,j] += beta * v(x - h, y, tn + dt)
                 else
-                    u_n_left = u_n[i - 1,j]
-                    v_n_left = v_n[i - 1,j]
-                    u_n_1_left = u_n_1[i-1,j]
-                    v_n_1_left = v_n_1[i-1,j]
+                    u_n_left = @inbounds u_n[i - 1,j]
+                    v_n_left = @inbounds v_n[i - 1,j]
+                    u_n_1_left = @inbounds u_n_1[i-1,j]
+                    v_n_1_left = @inbounds v_n_1[i-1,j]
                 end
 
                 if i == grid_size_in
@@ -162,13 +162,13 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                     v_n_right = v(x + h,y,tn)
                     u_n_1_right = u(x + h, y, tn - dt)
                     v_n_1_right = v(x + h, y, tn - dt)
-                    u_rhs[i,j] += beta * u(x + h, y, tn + dt)
-                    v_rhs[i,j] += beta * v(x + h, y, tn + dt)
+                    @inbounds u_rhs[i,j] += beta * u(x + h, y, tn + dt)
+                    @inbounds v_rhs[i,j] += beta * v(x + h, y, tn + dt)
                 else
-                    u_n_right = u_n[i + 1,j]
-                    v_n_right = v_n[i + 1,j]
-                    u_n_1_right = u_n_1[i + 1,j]
-                    v_n_1_right = v_n_1[i + 1,j]
+                    u_n_right = @inbounds u_n[i + 1,j]
+                    v_n_right = @inbounds v_n[i + 1,j]
+                    u_n_1_right = @inbounds u_n_1[i + 1,j]
+                    v_n_1_right = @inbounds v_n_1[i + 1,j]
                 end
 
                 if j == 1 
@@ -176,13 +176,13 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                     v_n_down = v(x, y - h, tn)
                     u_n_1_down = u(x, y - h, tn - dt)
                     v_n_1_down = v(x, y - h, tn - dt)
-                    u_rhs[i,j] += beta * u(x, y - h, tn + dt)
-                    v_rhs[i,j] += beta * v(x, y - h, tn + dt)
+                    @inbounds u_rhs[i,j] += beta * u(x, y - h, tn + dt)
+                    @inbounds v_rhs[i,j] += beta * v(x, y - h, tn + dt)
                 else
-                    u_n_down = u_n[i,j - 1]
-                    v_n_down = v_n[i,j - 1]
-                    u_n_1_down = u_n_1[i,j - 1]
-                    v_n_1_down = v_n_1[i,j - 1]
+                    u_n_down = @inbounds u_n[i,j - 1]
+                    v_n_down = @inbounds v_n[i,j - 1]
+                    u_n_1_down = @inbounds u_n_1[i,j - 1]
+                    v_n_1_down = @inbounds v_n_1[i,j - 1]
                 end
 
                 if j == grid_size_in 
@@ -190,18 +190,18 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                     v_n_up = v(x, y + h, tn) 
                     u_n_1_up = u(x, y + h, tn - dt) 
                     v_n_1_up = v(x, y + h, tn - dt) 
-                    u_rhs[i,j] += beta * u(x, y + h, tn + dt)
-                    v_rhs[i,j] += beta * v(x, y + h, tn + dt)
+                    @inbounds u_rhs[i,j] += beta * u(x, y + h, tn + dt)
+                    @inbounds v_rhs[i,j] += beta * v(x, y + h, tn + dt)
                 else
-                    u_n_up = u_n[i,j + 1]
-                    v_n_up = v_n[i,j + 1]
-                    u_n_1_up = u_n_1[i,j + 1]
-                    v_n_1_up = v_n_1[i,j + 1]
+                    u_n_up = @inbounds u_n[i,j + 1]
+                    v_n_up = @inbounds v_n[i,j + 1]
+                    u_n_1_up = @inbounds u_n_1[i,j + 1]
+                    v_n_1_up = @inbounds v_n_1[i,j + 1]
                 end
 
                 # diffuse
-                u_rhs[i,j] += alpha2 * u_n_center + beta *(u_n_left + u_n_right + u_n_down + u_n_up)
-                v_rhs[i,j] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
+                @inbounds u_rhs[i,j] += alpha2 * u_n_center + beta *(u_n_left + u_n_right + u_n_down + u_n_up)
+                @inbounds v_rhs[i,j] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
 
                 # pressure 
                 p_n_half_left = (p(x - h,y,tn) + p(x - h,y,tn + dt))/2
@@ -212,8 +212,8 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                 #dpdy_n_half = (p(x,y + h,tn + 0.5 * dt) - p(x,y - h,tn + 0.5 * dt))/(2*h)
                 dpdx_n_half = (p_n_half_right - p_n_half_left)/(2*h)
                 dpdy_n_half = (p_n_half_up - p_n_half_down)/(2*h)
-                u_rhs[i,j] -=  dt * dpdx_n_half
-                v_rhs[i,j] -=  dt * dpdy_n_half
+                @inbounds u_rhs[i,j] -=  dt * dpdx_n_half
+                @inbounds v_rhs[i,j] -=  dt * dpdy_n_half
 
                 # convection
                 dudx_n_1 = (u_n_1_right - u_n_1_left)/(2*h)#(u(x + h,y,tn - dt) - u(x - h,y,tn - dt))/(2*h)
@@ -234,8 +234,8 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                 convect_v_n_1 = u_n_1[i,j] * dvdx_n_1 + v_n_1[i,j] * dvdy_n_1
                 convect_v_n = u_n[i,j] * dvdx_n + v_n[i,j] * dvdy_n
                
-                u_rhs[i,j] -=  dt * (1.5 * convect_u_n - 0.5 * convect_u_n_1)
-                v_rhs[i,j] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
+                @inbounds u_rhs[i,j] -=  dt * (1.5 * convect_u_n - 0.5 * convect_u_n_1)
+                @inbounds v_rhs[i,j] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
 
                  #u_n_2[i,j] = u(x,y,tn) + dt * (laplace_u_n_half - dpdx_n_half - (1.5 * convect_u_n - 0.5 * convect_u_n_1))#u(x,y,tn + dt)
                 #v_n_2[i,j] = v(x,y,tn) + dt * (laplace_v_n_half - dpdy_n_half - (1.5 * convect_v_n - 0.5 * convect_v_n_1))#v(x,y,tn + dt)
@@ -254,8 +254,8 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
         for i in 1 : grid_size_in
             for j in 1 : grid_size_in
                 x,y = i*h, j *h 
-                u_ref[i,j] = u(x,y,tn + dt)
-                v_ref[i,j] = v(x,y,tn + dt)
+                @inbounds u_ref[i,j] = u(x,y,tn + dt)
+                @inbounds v_ref[i,j] = v(x,y,tn + dt)
             end
         end
 
