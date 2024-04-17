@@ -204,8 +204,14 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
                 v_rhs[i,j] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
 
                 # pressure 
-                dpdx_n_half = (p(x + h,y,tn + 0.5 * dt) - p(x - h,y,tn + 0.5 * dt))/(2*h)
-                dpdy_n_half = (p(x,y + h,tn + 0.5 * dt) - p(x,y - h,tn + 0.5 * dt))/(2*h)
+                p_n_half_left = (p(x - h,y,tn) + p(x - h,y,tn + dt))/2
+                p_n_half_right = (p(x + h,y,tn) + p(x + h,y,tn + dt))/2
+                p_n_half_down = (p(x,y - h,tn) + p(x,y - h,tn + dt))/2
+                p_n_half_up = (p(x,y + h,tn) + p(x,y + h,tn + dt))/2
+                #dpdx_n_half = (p(x + h,y,tn + 0.5 * dt) - p(x - h,y,tn + 0.5 * dt))/(2*h)
+                #dpdy_n_half = (p(x,y + h,tn + 0.5 * dt) - p(x,y - h,tn + 0.5 * dt))/(2*h)
+                dpdx_n_half = (p_n_half_right - p_n_half_left)/(2*h)
+                dpdy_n_half = (p_n_half_up - p_n_half_down)/(2*h)
                 u_rhs[i,j] -=  dt * dpdx_n_half
                 v_rhs[i,j] -=  dt * dpdy_n_half
 
