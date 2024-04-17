@@ -2,11 +2,13 @@ using Pkg
 Pkg.add("Plots")
 Pkg.add("LaTeXStrings")
 Pkg.add("IterativeSolvers")
+Pkg.add("Preconditioners")
 using Plots
 using LinearAlgebra
 using IterativeSolvers
 using SparseArrays
 using LaTeXStrings
+using Preconditioners
 
 nu = 1.0
 
@@ -104,6 +106,7 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
     L = sparse(rows, cols, vals, N_in, N_in)
     @assert issymmetric(L)
     @assert isposdef(L)
+    PreConL = CholeskyPreconditioner(L, 2)
 
     # Set initial state
     for i in 1 : grid_size_in
@@ -233,8 +236,8 @@ function solve_diffuse_convect2D(grid_size, Tn,T, verbose = false)
             end
         end
 
-        global u_n_2 = reshape(cg(L,vec(u_rhs), reltol = 1e-9),grid_size_in,grid_size_in)
-        global v_n_2 = reshape(cg(L,vec(v_rhs), reltol = 1e-9),grid_size_in,grid_size_in)
+        global u_n_2 = reshape(cg(L,vec(u_rhs), Pl = PreConL,reltol = 1e-9),grid_size_in,grid_size_in)
+        global v_n_2 = reshape(cg(L,vec(v_rhs), Pl = PreConL,reltol = 1e-9),grid_size_in,grid_size_in)
 
         global u_n_1 = u_n
         global v_n_1 = v_n
