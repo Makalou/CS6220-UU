@@ -9,17 +9,18 @@ using IterativeSolvers
 using SparseArrays
 using LaTeXStrings
 using Preconditioners
+using Statistics
 
 nu = 1.0
 
-# reference solution
-u(x,y,t) = -cos(x) * sin(y) * exp(-2*t)
-v(x,y,t) = sin(x) * cos(y) * exp(-2*t)
-p(x,y,t) = -1/4 * (cos(2*x) + cos(2*y)) * exp(-4*t)
+# reference solution (no permeate free-slip)
+u(x,y,t) = -sin(x) * cos(y) * exp(-2*t)
+v(x,y,t) = cos(x) * sin(y) * exp(-2*t)
+p(x,y,t) = 1/4 * (cos(2*x) + cos(2*y)) * exp(-4*t)
 
 function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
 
-    h = 1.0/(grid_size-1)
+    h = pi/(grid_size-1)
     #dt = 0.5 * h
     dt = (T)/Tn
 
@@ -33,12 +34,12 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
     global u_n_2 = zeros(grid_size_in,grid_size_in) # u^{n+1}
     global v_n_2 = zeros(grid_size_in,grid_size_in) # v^{n+1}
 
-    global p_n = zeros(grid_size_in,grid_size_in)
-    global p_n_2 = zeros(grid_size_in,grid_size_in)
+    global p_n = zeros(grid_size,grid_size)
+    global p_n_2 = zeros(grid_size,grid_size)
 
     global u_ref = zeros(grid_size_in,grid_size_in)
     global v_ref = zeros(grid_size_in,grid_size_in)
-    global p_ref = zeros(grid_size_in,grid_size_in)
+    global p_ref = zeros(grid_size,grid_size)
 
     # Construct the L matrix(without boundary)
     N_in = (grid_size_in)^2
@@ -116,74 +117,94 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
     cols2 = []
     vals2 = Float64[]
 
-    for i in 1 : grid_size_in
-        for j in 1 : grid_size_in
-            idx0 = get_idx(i,j,grid_size_in)
-            push!(rows2,idx0)
-            push!(cols2,idx0)
-            push!(vals2,4/(h^2))
+    for i in 1 : grid_size
+        for j in 1 : grid_size
+            idx0 = get_idx(i,j,grid_size)
 
-            idx_left = get_idx(i-1,j,grid_size_in)
-            idx_right = get_idx(i+1,j,grid_size_in)
-            idx_down = get_idx(i,j-1,grid_size_in)
-            idx_up = get_idx(i,j+1,grid_size_in)
+            idx_left = get_idx(i-1,j,grid_size)
+            idx_right = get_idx(i+1,j,grid_size)
+            idx_down = get_idx(i,j-1,grid_size)
+            idx_up = get_idx(i,j+1,grid_size)
+
+            s = 0
+            sl = sr = sd = su = 1
 
             if j == 1 
                 idx_down = 0
+                su += 1
+                s += 1
             end
 
-            if j == grid_size_in
+            if j == grid_size
                 idx_up = 0
+                sd += 1
+                s += 1
             end
 
             if i == 1
                 idx_left = 0
+                sr += 1
+                s += 1
             end
 
-            if i == grid_size_in
+            if i == grid_size
                 idx_right = 0
+                sl += 1
+                s += 1
             end
+
+            s = 2^(s)
 
             if idx_left != 0
                 push!(rows2,idx0)
                 push!(cols2,idx_left)
-                push!(vals2,-1/(h^2))
+                push!(vals2,-sl/(s * h^2))
             end
 
             if idx_right != 0
                 push!(rows2,idx0)
                 push!(cols2,idx_right)
-                push!(vals2,-1/(h^2))
+                push!(vals2,-sr/(s * h^2))
             end
 
             if idx_down != 0
                 push!(rows2,idx0)
                 push!(cols2,idx_down)
-                push!(vals2,-1/(h^2))
+                push!(vals2,-sd/(s * h^2))
             end
 
             if idx_up != 0
                 push!(rows2,idx0)
                 push!(cols2,idx_up)
-                push!(vals2,-1/(h^2))
+                push!(vals2,-su/(s * h^2))
             end
+
+            push!(rows2,idx0)
+            push!(cols2,idx0)
+            push!(vals2,4/(s * h^2))
         end
     end
 
-    Lp = sparse(rows2, cols2, vals2, N_in, N_in)
+    Lp = sparse(rows2, cols2, vals2, grid_size * grid_size, grid_size * grid_size)
     @assert issymmetric(Lp)
-    @assert isposdef(Lp)
+    # Lp is symmetric but semi-definite
     PreConLp = CholeskyPreconditioner(Lp, 2)
 
     # Set initial state
     for i in 1 : grid_size_in
         for j in 1 : grid_size_in
-            x,y = i*h, j *h 
+            x,y = i*h, j * h 
             u_n_1[i,j] = u(x,y,0)
             v_n_1[i,j] = v(x,y,0)
             u_n[i,j] = u(x,y,dt)
             v_n[i,j] = v(x,y,dt)
-            p_n[i,j] = p(x,y,dt)
+        end
+    end
+
+    for i in 1 : grid_size
+        for j in 1 : grid_size
+            x,y = (i-1)*h, (j-1)*h 
+            p_n[i,j] = p(x,y,0)
             p_n_2[i,j] = p(x,y,dt)
         end
     end
@@ -300,49 +321,20 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
 
         u_rhs1 = zeros(grid_size_in,grid_size_in)
         v_rhs1 = zeros(grid_size_in,grid_size_in)
-        p_rhs = zeros(grid_size_in,grid_size_in)
+        p_rhs = zeros(grid_size,grid_size)
         div = zeros(grid_size_in,grid_size_in)
+        p_n_2 = zeros(grid_size,grid_size)
+
         for it in 1 : max_iter
             if verbose
                 println("iteration : ",it)
             end
             for i in 1 : grid_size_in
                 for j in 1 : grid_size_in
-                    x,y = i*h, j *h 
-                    p_n_left = p_n_right = p_n_down = p_n_up = 0.0
-                    p_n_2_left = p_n_2_right = p_n_2_down = p_n_2_up = 0.0
-
-                    if i == 1
-                        p_n_left = p(x - h,y,tn)
-                        p_n_2_left = p(x - h,y,tn+dt)
-                    else
-                        p_n_left = p_n[i - 1,j]
-                        p_n_2_left = p_n_2[i - 1,j]
-                    end
-
-                    if i == grid_size_in
-                        p_n_right = p(x + h,y,tn)
-                        p_n_2_right = p(x + h,y,tn+dt)
-                    else
-                        p_n_right = p_n[i + 1,j]
-                        p_n_2_right = p_n_2[i + 1,j]
-                    end
-
-                    if j == 1
-                        p_n_down = p(x, y - h, tn)
-                        p_n_2_down = p(x, y - h, tn+dt)
-                    else
-                        p_n_down = p_n[i, j - 1]
-                        p_n_2_down = p_n_2[i, j - 1]
-                    end
-
-                    if j == grid_size_in
-                        p_n_up = p(x, y + h, tn)
-                        p_n_2_up = p(x, y + h, tn+dt)
-                    else
-                        p_n_up = p_n[i, j + 1]
-                        p_n_2_up = p_n_2[i, j + 1]
-                    end
+                    p_n_left = p_n[i,j+1]; p_n_2_left = p_n_2[i,j+1]
+                    p_n_right = p_n[i+2,j+1]; p_n_2_right = p_n_2[i+2,j+1]
+                    p_n_down = p_n[i+1,j]; p_n_2_down = p_n_2[i+1,j]
+                    p_n_up = p_n[i+1,j+2]; p_n_2_up = p_n_2[i+1,j+2]
 
                     p_n_half_left = (p_n_left + p_n_2_left)/2
                     p_n_half_right = (p_n_right + p_n_2_right)/2
@@ -359,67 +351,102 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
             #solve velocity with updated pressure
             global u_n_2 = reshape(cg(L,vec(u_rhs1),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
             global v_n_2 = reshape(cg(L,vec(v_rhs1),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
-                    
+                
             # use updated velocity to build pressure poisson equation
-            for i in 1 : grid_size_in
-                for j in 1 : grid_size_in
-                    x,y = i*h, j *h 
-                    u_left = u_right = u_down = u_up = 0.0
-                    v_left = v_right = v_down = v_up = 0.0
-                    p_rhs[i,j] = 0
-                    if i == 1 
-                        u_left = u(x - h,y,tn + dt) # Use Dirichelet boundary condition
-                        v_left = v(x - h,y,tn + dt) 
-                        p_rhs[i,j] += p(x - h, y , tn + dt)/(h^2)
+            # corners
+            p_rhs[1,1] = 0
+            p_rhs[1,grid_size] = 0
+            p_rhs[grid_size,1] = 0
+            p_rhs[grid_size,grid_size] = 0
+
+            # boundaries
+            for i in 2 : grid_size - 1
+                x = (i-1) * h; y = 0
+                u_left = u(x-h,y,tn+dt); u_right = u(x+h,y,tn+dt)
+                dudx = (u_right - u_left)/(2*h)
+                dvdy = -dudx
+                v_up = v(x,y + h,tn + dt)
+                v_down = v_up - 2*h*dvdy
+                d2vdy2 = (v_up + v_down)/(h^2)
+                p_rhs[i,1] =  (-dudx * dvdy - (nu/h)*d2vdy2) #divide by two
+
+                y = (grid_size-1) * h
+                u_left = u(x-h,y,tn+dt); u_right = u(x+h,y,tn+dt)
+                dudx = (u_right - u_left)/(2*h)
+                dvdy = -dudx
+                v_down = v(x,y - h,tn + dt)
+                v_up = v_down + 2*h*dvdy
+                d2vdy2 = (v_up + v_down)/(h^2)
+                p_rhs[i,grid_size] = (-dudx * dvdy - (nu/h)*d2vdy2) #divide by two
+            end
+            for j in 2 : grid_size - 1
+                x = 0; y = (j-1) * h
+                v_down = v(x,y-h,tn + dt); v_up = v(x,y+h,tn+dt)
+                dvdy = (v_up - v_down)/(2*h)
+                dudx = -dvdy
+                u_right = u(x + h,y,tn+dt)
+                u_left = u_right - 2*h*dudx 
+                d2udx2 = (u_left + u_right)/(h^2)
+                p_rhs[1,j] = (-dudx * dvdy - (nu/h)*d2udx2) # divide by two
+
+                x = (grid_size-1) * h
+                v_down = v(x,y-h,tn + dt); v_up = v(x,y+h,tn+dt)
+                dvdy = (v_up - v_down)/(2*h)
+                dudx = -dvdy
+                u_left = u(x - h,y,tn+dt)
+                u_right = u_left + 2*h*dudx 
+                d2udx2 = (u_left + u_right)/(h^2)
+                p_rhs[grid_size,j] = (-dudx * dvdy - (nu/h)*d2udx2) #divide by two
+            end
+            # interior points
+            for i in 2 : grid_size - 1
+                for j in 2 : grid_size - 1
+                    x,y = (i-1) * h, (j-1) * h
+                    u_i = i -1; u_j = j - 1
+                    u_left = u_right = u_up = u_down = 0
+                    v_left = v_right = v_up = v_down = 0
+                    if i == 2
+                        u_left = u(x - h,y,tn+dt); v_left = v(x - h,y,tn+dt)
                     else
-                        u_left = u_n_2[i - 1,j]
-                        v_left = v_n_2[i - 1,j]
+                        u_left = u_n_2[u_i - 1,u_j]; v_left = v_n_2[u_i - 1,u_j]
                     end
-    
-                    if i == grid_size_in
-                        u_right = u(x + h,y,tn + dt) # Use Dirichelet boundary condition
-                        v_right = v(x + h,y,tn + dt)
-                        p_rhs[i,j] += p(x + h, y , tn + dt)/(h^2)
+                    if i == grid_size - 1
+                        u_right = u(x + h, y, tn + dt); v_right = v(x + h, y, tn + dt)
                     else
-                        u_right = u_n_2[i + 1,j]
-                        v_right = v_n_2[i + 1,j]
+                        u_right = u_n_2[u_i + 1, u_j]; v_right = v_n_2[u_i + 1, u_j]
                     end
-    
-                    if j == 1 
-                        u_down = u(x, y - h, tn + dt) # Use Dirichelet boundary condition
-                        v_down = v(x, y - h, tn + dt)
-                        p_rhs[i,j] += p(x, y - h, tn + dt)/(h^2)
+                    if j == 2
+                        u_down = u(x,y-h,tn+dt); v_down = v(x,y-h,tn+dt)
                     else
-                        u_down = u_n_2[i,j - 1]
-                        v_down = v_n_2[i,j - 1]
+                        u_down = u_n_2[u_i, u_j - 1]; v_down = v_n_2[u_i, u_j - 1]
                     end
-    
-                    if j == grid_size_in 
-                        u_up = u(x, y + h, tn + dt) # Use Dirichelet boundary condition
-                        v_up = v(x, y + h, tn + dt) 
-                        p_rhs[i,j] += p(x, y + h, tn + dt)/(h^2)
+                    if j == grid_size - 1
+                        u_up = u(x,y+h,tn+dt); v_up = v(x,y+h,tn+dt)
                     else
-                        u_up = u_n_2[i,j + 1]
-                        v_up = v_n_2[i,j + 1]
+                        u_up = u_n_2[u_i, u_j + 1]; v_up = v_n_2[u_i, u_j + 1]
                     end
 
                     dudx = (u_right - u_left)/(2*h)
                     dudy = (u_up - u_down)/(2*h)
                     dvdx = (v_right - v_left)/(2*h)
                     dvdy = (v_up - v_down)/(2*h)
-                    p_rhs[i,j] += 2.0 * (dvdx * dudy - dudx * dvdy)
-                    div[i,j] = dudx + dvdy;
+                    p_rhs[i,j] = 2.0 * (dvdx * dudy - dudx * dvdy)
+                    div[i-1,j-1] = dudx + dvdy
                 end
             end
+
             if verbose
                 println("div : ",norm(vec(div),Inf))
             end
-            #solve pressure with updated velocity
-            global p_n_2 = reshape(cg(Lp,vec(p_rhs),Pl = PreConLp, reltol = 1e-9),grid_size_in,grid_size_in)
-        end
+            #plt = surface(div, aspect_ratio=:equal, title="Divergence")
+            #display(plt)
 
-        # plt = surface(div, aspect_ratio=:equal, title="Divergence")
-        # display(plt)
+            p_rhs_vec = vec(p_rhs)
+            p_rhs_mean = mean(p_rhs_vec)
+            p_rhs_vec = p_rhs_vec .- p_rhs_mean
+            p_star = reshape(cg(Lp,p_rhs_vec),grid_size,grid_size)
+            global p_n_2 = p_star
+        end
 
         global u_n_1 = u_n
         global v_n_1 = v_n
@@ -433,8 +460,14 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
             for j in 1 : grid_size_in
                 x,y = i*h, j *h 
                 @inbounds u_ref[i,j] = u(x,y,tn + dt)
-                @inbounds v_ref[i,j] = v(x,y,tn + dt)
-                @inbounds p_ref[i,j] = p(x,y,tn + dt)
+                @inbounds v_ref[i,j] = v(x,y,tn + dt)   
+            end
+        end
+
+        for i in 1 : grid_size
+            for j in 1 : grid_size
+                x,y = (i-1)*h, (j-1) *h 
+                p_ref[i,j] = p(x,y,tn + dt)
             end
         end
 
@@ -455,7 +488,7 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
             println("relative l2 for v: ", vl2e)
             println("relative l_inf for v: ", vlinfe)
             println("relative l2 for p: ", pl2e)
-            println("relative l_inf for vp ", plinfe)
+            println("relative l_inf for p ", plinfe)
         end
     end
 
@@ -475,7 +508,7 @@ T = 1.0
 for Tn in 10 : 100
     dt = Float64(T) / Float64(Tn)
     println("dt : ",dt)
-    ul2error, ulinf_error, vl2error, vlinf_error, pl2error, plinf_error = solve_NS2D(101,Tn,T,10,false)
+    ul2error, ulinf_error, vl2error, vlinf_error, pl2error, plinf_error = solve_NS2D(101,Tn,T,3,false)
     println("relative l2 for u: ", ul2error)
     println("relative l_inf for u: ", ulinf_error)
     println("relative l2 for v: ", vl2error)
