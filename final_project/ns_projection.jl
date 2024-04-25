@@ -224,6 +224,11 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
         u_rhs = zeros(grid_size_in,grid_size_in)
         v_rhs = zeros(grid_size_in,grid_size_in)
 
+        u_dbc_n(x,y) = u(x,y,tn)
+        u_dbc_n_1(x,y) = u(x,y,tn + dt)
+        v_dbc_n(x,y) = v(x,y,tn)
+        v_dbc_n_1(x,y) = v(x,y,tn + dt)
+
         for i in 1 : grid_size_in
             for j in 1 : grid_size_in
                 x,y = i*h, j *h 
@@ -321,119 +326,114 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
                 @inbounds v_rhs[i,j] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
 
                 # lag pressure gradient
-                u_rhs[i,j] -= dt * (p(x + h,y,tn - 0.5 * dt) - p(x - h,y,tn - 0.5 * dt)) / (2*h)
-                v_rhs[i,j] -= dt * (p(x,y + h,tn - 0.5 * dt) - p(x,y - h,tn - 0.5 * dt)) / (2*h)
-                #u_rhs[i,j] -= dt * (p_n[i+2,j+1] - p_n[i,j+1]) / (2*h)
-                #v_rhs[i,j] -= dt * (p_n[i+1,j+2] - p_n[i+1,j]) / (2*h)
+                u_rhs[i,j] -= dt * (p_n[i+2,j+1] - p_n[i,j+1]) / (2*h)
+                v_rhs[i,j] -= dt * (p_n[i+1,j+2] - p_n[i+1,j]) / (2*h)
+                #u_rhs[i,j] -= dt * (p(x+h,y,tn - 0.5*dt) - p(x-h,y,tn - 0.5 *dt)) / (2*h)
+                #v_rhs[i,j] -= dt * (p(x,y + h,tn - 0.5*dt) - p(x,y - h,tn - 0.5*dt)) / (2*h)
             end
         end
 
         # solve for u_star
-        global u_star = reshape(cg(L,vec(u_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
-        global v_star = reshape(cg(L,vec(v_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
+        u_star = reshape(cg(L,vec(u_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
+        v_star = reshape(cg(L,vec(v_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
 
-        # projection
-        # solve for phi
-        # phi_rhs = zeros(grid_size,grid_size)
-        # corners
-        # x = 0; y = 0
-        # dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h,y))/(2*h) - (u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2 * h,y))
-        # dvdy = (v_dbc_n_1(x,y + 3*h) - v_dbc_n_1(x,y + h))/(2*h) - (v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y + h) + v_dbc_n_1(x, y + 2 * h))
-        # phi_rhs[1,1] = -(dudx + dvdy)/4 #divide by four
+        #projection
+        #solve for phi
+        phi_rhs = zeros(grid_size,grid_size)
+        #corners
+        x = 0; y = 0
+        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h,y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2 * h,y))/h
+        dvdy = (v_dbc_n_1(x,y + 3*h) - v_dbc_n_1(x,y + h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y + h) + v_dbc_n_1(x, y + 2 * h))/h
+        phi_rhs[1,1] =  -(dudx + dvdy)/4 #divide by four
 
-        # x = 0; y = (grid_size_in + 1) * h
-        # dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h,y))/(2*h) - (u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2 * h,y))
-        # dvdy = (v_dbc_n_1(x,y-h) - v_dbc_n_1(x,y-3*h))/(2*h) - (v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y-h) + v_dbc_n_1(x,y - 2*h))
-        # phi_rhs[1,grid_size] =  -(dudx + dvdy)/4 #divide by four
+        x = 0; y = (grid_size_in + 1) * h
+        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h,y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2 * h,y))/h
+        dvdy = (v_dbc_n_1(x,y-h) - v_dbc_n_1(x,y-3*h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y-h) + v_dbc_n_1(x,y - 2*h))/h
+        phi_rhs[1,grid_size] =  -(dudx + dvdy)/4 #divide by four
 
-        # x = (grid_size_in + 1) * h; y = 0
-        # dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h, y))/(2*h) - (u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2*h,y))
-        # dvdy = (v_dbc_n_1(x,y + 3*h) - v_dbc_n_1(x,y + h))/(2*h) - (v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y + h) + v_dbc_n_1(x, y + 2 * h))
-        # phi_rhs[grid_size,1] =  -(dudx + dvdy)/4 #divide by four
+        x = (grid_size_in + 1) * h; y = 0
+        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h, y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2*h,y))/h
+        dvdy = (v_dbc_n_1(x,y + 3*h) - v_dbc_n_1(x,y + h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y + h) + v_dbc_n_1(x, y + 2 * h))/h
+        phi_rhs[grid_size,1] =  -(dudx + dvdy)/4 #divide by four
 
-        # x = (grid_size_in + 1) * h; y = (grid_size_in + 1) * h
-        # dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h, y))/(2*h) - (u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2*h,y))
-        # dvdy = (v_dbc_n_1(x,y-h) - v_dbc_n_1(x,y-3*h))/(2*h) - (v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y-h) + v_dbc_n_1(x,y - 2*h))
-        # phi_rhs[grid_size,grid_size] =  -(dudx + dvdy)/4 #divide by four
+        x = (grid_size_in + 1) * h; y = (grid_size_in + 1) * h
+        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h, y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2*h,y))/h
+        dvdy = (v_dbc_n_1(x,y-h) - v_dbc_n_1(x,y-3*h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y-h) + v_dbc_n_1(x,y - 2*h))/h
+        phi_rhs[grid_size,grid_size] = -(dudx + dvdy)/4 #divide by four
 
         # boundaries
-        # for i in 2 : grid_size - 1
-        #     x = (i-1) * h; y = 0
-        #     u_left = u_dbc_n_1(x-h,y); u_right = u_dbc_n_1(x+h,y)
-        #     dudx = (u_right - u_left)/(2*h)
-        #     dvdy = (v_star[i - 1,3] - v_star[i-1,1])/(2*h) - (v_dbc_n_1(x,y) - 2*v_star[i-1,1] + v_star[i-1,2])
-        #     phi_rhs[i,1] = -(dudx + dvdy)/2 #divide by two
+        for i in 2 : grid_size - 1
+            x = (i-1) * h; y = 0
+            dudx = (u_dbc_n_1(x+h,y) - u_dbc_n_1(x-h,y))/(2*h)
+            dvdy = (v_star[i - 1,3] - v_star[i - 1,1])/(2*h) - 2*(v_dbc_n_1(x,y) - 2*v_star[i-1,1] + v_star[i-1,2])/h
+            phi_rhs[i,1] = -(dudx + dvdy)/2 #divide by two
 
-        #     y = (grid_size-1) * h
-        #     u_left = u_dbc_n_1(x-h,y); u_right = u_dbc_n_1(x+h,y)
-        #     dudx = (u_right - u_left)/(2*h)
-        #     dvdy = (v_star[i - 1,grid_size - 3] - v_star[i-1,grid_size - 5])/(2*h) + (v(x,y,tn + dt) - 2*v_star[i-1,grid_size - 2] + v_star[i-1,grid_size - 3])
-        #     phi_rhs[i,grid_size] = -(dudx + dvdy)/2 #divide by two
-        # end
-        # for j in 2 : grid_size - 1
-        #     x = 0; y = (j-1) * h
-        #     v_down = v_dbc_n_1(x,y-h); v_up = v_dbc_n_1(x,y+h)
-        #     dvdy = (v_up - v_down)/(2*h)
-        #     dudx = (u_star[3,j - 1] - u_star[1,j - 1])/(2*h) - (u(x,y,tn + dt) - 2*u_star[1,j - 1] + u_star[2,j - 1])
-        #     phi_rhs[1,j] = -(dudx + dvdy)/2 # divide by two
+            y = (grid_size-1) * h
+            dudx = (u_dbc_n_1(x+h,y) - u_dbc_n_1(x-h,y))/(2*h)
+            dvdy = (v_star[i - 1,grid_size - 3] - v_star[i-1,grid_size - 5])/(2*h) + 2*(v(x,y,tn + dt) - 2*v_star[i-1,grid_size - 2] + v_star[i-1,grid_size - 3])/h
+            phi_rhs[i,grid_size] = -(dudx + dvdy)/2 #divide by two
+        end
+        for j in 2 : grid_size - 1
+            x = 0; y = (j-1) * h
+            dvdy = (v_dbc_n_1(x,y+h) - v_dbc_n_1(x,y-h))/(2*h)
+            dudx = (u_star[3,j - 1] - u_star[1,j - 1])/(2*h) - 2*(u(x,y,tn + dt) - 2*u_star[1,j - 1] + u_star[2,j - 1])/h
+            phi_rhs[1,j] = -(dudx + dvdy)/2 # divide by two
 
-        #     x = (grid_size-1) * h
-        #     v_down = v_dbc_n_1(x,y-h); v_up = v_dbc_n_1(x,y+h)
-        #     dvdy = (v_up - v_down)/(2*h)
-        #     dudx = (u_star[grid_size - 3,j - 1] - u_star[grid_size - 5,j - 1])/(2*h) + (u_dbc_n_1(x,y) - 2*u_star[grid_size - 2,j - 1] + u_star[grid_size - 3,j - 1])
-        #     phi_rhs[grid_size,j] = -(dudx + dvdy)/2 #divide by two
-        # end
-        # # interior points
-        # for i in 2 : grid_size - 1
-        #     for j in 2 : grid_size - 1
-        #         x,y = (i-1) * h, (j-1) * h
-        #         u_i = i -1; u_j = j - 1
-        #         u_left = u_right = 0
-        #         v_up = v_down = 0
-        #         if i == 2
-        #             u_left = u_dbc_n_1(x - h,y)
-        #         else
-        #             u_left = u_star[u_i - 1,u_j]
-        #         end
-        #         if i == grid_size - 1
-        #             u_right = u_dbc_n_1(x + h, y)
-        #         else
-        #             u_right = u_star[u_i + 1, u_j]
-        #         end
-        #         if j == 2
-        #             v_down = v_dbc_n_1(x,y-h)
-        #         else
-        #             v_down = v_star[u_i, u_j - 1]
-        #         end
-        #         if j == grid_size - 1
-        #             v_up = v_dbc_n_1(x,y+h)
-        #         else
-        #             v_up = v_star[u_i, u_j + 1]
-        #         end
+            x = (grid_size-1) * h
+            dvdy = (v_dbc_n_1(x,y+h) - v_dbc_n_1(x,y-h))/(2*h)
+            dudx = (u_star[grid_size - 3,j - 1] - u_star[grid_size - 5,j - 1])/(2*h) + 2*(u_dbc_n_1(x,y) - 2*u_star[grid_size - 2,j - 1] + u_star[grid_size - 3,j - 1])/h
+            phi_rhs[grid_size,j] = -(dudx + dvdy)/2 #divide by two
+        end
+        # interior points
+        for i in 2 : grid_size - 1
+            for j in 2 : grid_size - 1
+                x,y = (i-1) * h, (j-1) * h
+                u_i = i - 1; u_j = j - 1
+                u_left = u_right = 0
+                v_up = v_down = 0
+                if i == 2
+                    u_left = u_dbc_n_1(x - h,y)
+                else
+                    u_left = u_star[u_i - 1,u_j]
+                end
+                if i == grid_size - 1
+                    u_right = u_dbc_n_1(x + h, y)
+                else
+                    u_right = u_star[u_i + 1, u_j]
+                end
+                if j == 2
+                    v_down = v_dbc_n_1(x,y-h)
+                else
+                    v_down = v_star[u_i, u_j - 1]
+                end
+                if j == grid_size - 1
+                    v_up = v_dbc_n_1(x,y+h)
+                else
+                    v_up = v_star[u_i, u_j + 1]
+                end
 
-        #         dudx = (u_right - u_left)/(2*h)
-        #         dvdy = (v_up - v_down)/(2*h)
-        #         phi_rhs[i,j] = -(dudx + dvdy)
-        #     end
-        # end
+                dudx = (u_right - u_left)/(2*h)
+                dvdy = (v_up - v_down)/(2*h)
+                phi_rhs[i,j] = -(dudx + dvdy)
+            end
+        end
 
-        #phi_rhs_vec = vec(phi_rhs)
-        #phi_rhs_mean = mean(phi_rhs_vec)
-        #phi_rhs_vec = phi_rhs_vec .- phi_rhs_mean
-        #phi = reshape(cg(Lp,phi_rhs_vec,Pl = PreConL, reltol = 1e-9),grid_size,grid_size)
+        phi_rhs_vec = vec(phi_rhs)
+        phi_rhs_mean = mean(phi_rhs_vec)
+        phi_rhs_vec = phi_rhs_vec .- phi_rhs_mean
+        phi = reshape(cg(Lp,phi_rhs_vec,Pl = PreConLp, reltol = 1e-9),grid_size,grid_size)
 
         # correct velocity field
         for i in 1 : grid_size_in
             for j in 1 : grid_size_in
-                x,y = i*h, j*h 
-                dpdx_old_half = (p(x+h,y,tn - 0.5 * dt) - p(x - h,y,tn - 0.5 * dt)) / (2*h)
-                dpdx_new_half = (p(x+h,y,tn + 0.5 * dt) - p(x - h,y,tn + 0.5 * dt)) / (2*h)
-                dpdy_old_half = (p(x,y + h,tn - 0.5 * dt) - p(x,y - h, tn - 0.5 * dt)) / (2*h)
-                dpdy_new_half = (p(x,y + h,tn + 0.5 * dt) - p(x,y - h, tn + 0.5 * dt)) / (2*h)
-                #dphidx = (phi[i+2,j+1] - phi[i,j+1])/(2*h)
-                #dphidy = (phi[i+1,j+2] - phi[i+1,j])/(2*h)
-                dphidx = dpdx_new_half - dpdx_old_half
-                dphidy = dpdy_new_half - dpdy_old_half
+                x = i * h; y = j * h
+                # k1 = 0.5; k2 = 0.5
+                # dpdx_old = (p(x + h,y,tn - k1 * dt) - p(x - h,y,tn - k1 * dt)) / (2*h)
+                # dpdx_new = (p(x + h,y,tn + k2 * dt) - p(x - h,y,tn + k2 * dt)) / (2*h)
+                # dpdy_old = (p(x,y + h,tn - k1 * dt) - p(x,y - h,tn - k1 * dt)) / (2*h)
+                # dpdy_new = (p(x,y + h,tn + k2 * dt) - p(x,y - h,tn + k2 * dt)) / (2*h)
+                dphidx = (phi[i+2,j+1] - phi[i,j+1])/(2*h)
+                dphidy = (phi[i+1,j+2] - phi[i+1,j])/(2*h)
                 u_star[i,j] -= dt * dphidx
                 v_star[i,j] -= dt * dphidy
             end
@@ -443,7 +443,33 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
         v_n_2 = v_star
 
         # update the pressure
-        #global p_n = p_n + phi
+        for i in 1 : grid_size
+            for j in 1 : grid_size
+                phi_left = phi_right = phi_up = phi_down = 0
+                if i == 1
+                    phi_left = phi[i + 1,j]
+                else
+                    phi_left = phi[i - 1,j]
+                end
+                if i == grid_size
+                    phi_right = phi[i - 1,j]
+                else
+                    phi_right = phi[i + 1,j]
+                end
+                if j == 1
+                    phi_down = phi[i, j + 1]
+                else
+                    phi_down = phi[i, j - 1]
+                end
+                if j == grid_size
+                    phi_up = phi[i, j - 1]
+                else
+                    phi_up = phi[i, j + 1]
+                end
+
+                p_n[i,j] += phi[i,j] - nu * dt/2 * (-4 * phi[i,j] + phi_left + phi_right + phi_up + phi_down)/(h^2)
+            end
+        end
 
         # update old velocity
         global u_n_1 = u_n
@@ -501,7 +527,7 @@ pl_infs = []
 
 T = 1.0
 
-for Tn in 10 : 50
+for Tn in 10 : 100
     dt = Float64(T) / Float64(Tn)
     println("dt : ",dt)
     ue, ul2error, ulinf_error, ve, vl2error, vlinf_error, pe, pl2error, plinf_error = solve_NS2D_projection(101,Tn,T,false)
@@ -519,33 +545,35 @@ for Tn in 10 : 50
     push!(pl2s,pl2error)
     push!(pl_infs,plinf_error)
 
-    plt = heatmap(abs.(ue), aspect_ratio=:equal, c=:viridis, title="pointwise error of u")
-    savefig(plt,"res3/pointwise_error/upwe$Tn.png")
+    plt = heatmap(abs.(pe), aspect_ratio=:equal, c=:viridis, title="pointwise error of pressure")
+    savefig(plt,"res3/pointwise_error/ppwe$Tn.png")
 
     plt = plot(dts,ul2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
     savefig(plt,"res3/udtvsl2.png")
     plt = plot(dts,ul_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
     savefig(plt,"res3/udtvslinfty.png")
-    plt = plot(dts,[ul2s,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+
+    line(k,x0,y0,x) = 2 .^(log2(y0) + k * (log2(x) - log2(x0)))
+    plt = plot(dts,[ul2s,line.(1,dts[end],ul2s[end],dts),line.(2,dts[end],ul2s[end],dts), line.(3,dts[end],ul2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res3/udtvsl2loglog.png")
-    plt = plot(dts,[ul_infs,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    plt = plot(dts,[ul_infs,line.(1,dts[end],ul_infs[end],dts),line.(2,dts[end],ul_infs[end],dts), line.(3,dts[end],ul_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res3/udtvslinftyloglog.png")
 
     plt = plot(dts,vl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
     savefig(plt,"res3/vdtvsl2.png")
     plt = plot(dts,vl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
     savefig(plt,"res3/vdtvslinfty.png")
-    plt = plot(dts,[vl2s,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    plt = plot(dts,[vl2s,line.(1,dts[end],vl2s[end],dts),line.(2,dts[end],vl2s[end],dts), line.(3,dts[end],vl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res3/vdtvsl2loglog.png")
-    plt = plot(dts,[vl_infs,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    plt = plot(dts,[vl_infs,line.(1,dts[end],vl_infs[end],dts),line.(2,dts[end],vl_infs[end],dts), line.(3,dts[end],vl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res3/vdtvslinftyloglog.png")
 
     plt = plot(dts,pl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
     savefig(plt,"res3/pdtvsl2.png")
     plt = plot(dts,pl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
     savefig(plt,"res3/pdtvslinfty.png")
-    plt = plot(dts,[pl2s,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    plt = plot(dts,[pl2s,line.(1,dts[end],pl2s[end],dts),line.(2,dts[end],pl2s[end],dts), line.(3,dts[end],pl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res3/pdtvsl2loglog.png")
-    plt = plot(dts,[pl_infs,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    plt = plot(dts,[pl_infs,line.(1,dts[end],pl_infs[end],dts),line.(2,dts[end],pl_infs[end],dts), line.(3,dts[end],pl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res3/pdtvslinftyloglog.png")
 end
