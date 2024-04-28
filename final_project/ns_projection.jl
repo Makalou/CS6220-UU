@@ -3,13 +3,17 @@ using Pkg
 #Pkg.add("LaTeXStrings")
 #Pkg.add("IterativeSolvers")
 #Pkg.add("Preconditioners")
+#Pkg.add("IncompleteLU")
 using Plots
 using LinearAlgebra
 using IterativeSolvers
 using SparseArrays
 using LaTeXStrings
 using Preconditioners
-using Statistics
+using BenchmarkTools
+using IncompleteLU
+include("utilities.jl")
+using .MyUtil
 
 nu = 1.0
 
@@ -25,6 +29,7 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
     dt = (T)/Tn
 
     grid_size_in = grid_size - 2
+    p_grid_size = grid_size - 1
 
     global u_n = zeros(grid_size_in,grid_size_in)
     global v_n = zeros(grid_size_in,grid_size_in)
@@ -37,185 +42,42 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
     global u_star = zeros(grid_size_in,grid_size_in) # u^*
     global v_star = zeros(grid_size_in,grid_size_in) # v^*
 
-    global p_n = zeros(grid_size,grid_size)
+    global p_n = zeros(p_grid_size,p_grid_size)
 
     global u_ref = zeros(grid_size_in,grid_size_in)
     global v_ref = zeros(grid_size_in,grid_size_in)
-    global p_ref = zeros(grid_size,grid_size)
+    global p_ref = zeros(p_grid_size,p_grid_size)
 
     # Construct the L matrix(without boundary)
-    N_in = (grid_size_in)^2
-
-    get_idx(i,j,grid_size_in) = (i - 1) * grid_size_in + (j - 1) + 1
-
-    rows = []
-    cols = []
-    vals = Float64[]
 
     alpha1 = 1.0 + (2.0 * nu * dt)/(h^2)
     alpha2 = 1.0 - (2.0 * nu * dt)/(h^2)
     beta = (nu * dt)/(2.0*h^2) 
 
-    for i in 1 : grid_size_in
-        for j in 1 : grid_size_in
-            idx0 = get_idx(i,j,grid_size_in)
-            push!(rows,idx0)
-            push!(cols,idx0)
-            push!(vals,alpha1)
-
-            idx_left = get_idx(i-1,j,grid_size_in)
-            idx_right = get_idx(i+1,j,grid_size_in)
-            idx_down = get_idx(i,j-1,grid_size_in)
-            idx_up = get_idx(i,j+1,grid_size_in)
-
-            if j == 1 
-                idx_down = 0
-            end
-
-            if j == grid_size_in
-                idx_up = 0
-            end
-
-            if i == 1
-                idx_left = 0
-            end
-
-            if i == grid_size_in
-                idx_right = 0
-            end
-
-            if idx_left != 0
-                push!(rows,idx0)
-                push!(cols,idx_left)
-                push!(vals,-beta)
-            end
-
-            if idx_right != 0
-                push!(rows,idx0)
-                push!(cols,idx_right)
-                push!(vals,-beta)
-            end
-
-            if idx_down != 0
-                push!(rows,idx0)
-                push!(cols,idx_down)
-                push!(vals,-beta)
-            end
-
-            if idx_up != 0
-                push!(rows,idx0)
-                push!(cols,idx_up)
-                push!(vals,-beta)
-            end
-        end
-    end
-
-    L = sparse(rows, cols, vals, N_in, N_in)
+    L = Laplacian(grid_size_in,alpha1,-beta,Dirichlet)
     @assert issymmetric(L)
     @assert isposdef(L)
     PreConL = CholeskyPreconditioner(L, 2)
 
-    rows2 = []
-    cols2 = []
-    vals2 = Float64[]
-
-    for i in 1 : grid_size
-        for j in 1 : grid_size
-            idx0 = get_idx(i,j,grid_size)
-
-            idx_left = get_idx(i-1,j,grid_size)
-            idx_right = get_idx(i+1,j,grid_size)
-            idx_down = get_idx(i,j-1,grid_size)
-            idx_up = get_idx(i,j+1,grid_size)
-
-            s = 0
-            sl = sr = sd = su = 1
-
-            if j == 1 
-                idx_down = 0
-                su += 1
-                s += 1
-            end
-
-            if j == grid_size
-                idx_up = 0
-                sd += 1
-                s += 1
-            end
-
-            if i == 1
-                idx_left = 0
-                sr += 1
-                s += 1
-            end
-
-            if i == grid_size
-                idx_right = 0
-                sl += 1
-                s += 1
-            end
-
-            s = 2^(s)
-
-            if idx_left != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_left)
-                push!(vals2,-sl/(s * h^2))
-            end
-
-            if idx_right != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_right)
-                push!(vals2,-sr/(s * h^2))
-            end
-
-            if idx_down != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_down)
-                push!(vals2,-sd/(s * h^2))
-            end
-
-            if idx_up != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_up)
-                push!(vals2,-su/(s * h^2))
-            end
-
-            push!(rows2,idx0)
-            push!(cols2,idx0)
-            push!(vals2,4/(s * h^2))
-        end
-    end
-
-    Lp = sparse(rows2, cols2, vals2, grid_size * grid_size, grid_size * grid_size)
+    Lp, Sp = Laplacian(p_grid_size,4/(h^2),-1/(h^2),Neumann)
+    #display(spy(Lp))
+    #readline()
+    Lp = Sp * Lp
+    Lp = [Lp ones(p_grid_size*p_grid_size); ones(p_grid_size * p_grid_size)' 0]
     @assert issymmetric(Lp)
-    # Lp is symmetric but semi-definite
-    PreConLp = CholeskyPreconditioner(Lp, 2)
+    #print(eigen(Matrix(Lp)).values)
+    #display(cond(Matrix(Lp)))
+    PreConLp = ilu(Lp,τ = 0.1)
 
     # Set initial state
-    for i in 1 : grid_size_in
-        for j in 1 : grid_size_in
-            x,y = i*h, j * h 
-            u_n_1[i,j] = u(x,y,0)
-            v_n_1[i,j] = v(x,y,0)
-            u_n[i,j] = u(x,y,dt)
-            v_n[i,j] = v(x,y,dt)
-        end
-    end
+    u_n_1 = [u(i*h,j*h,0) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    v_n_1 = [v(i*h,j*h,0) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    u_n = [u(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    v_n = [v(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
 
-    for i in 1 : grid_size
-        for j in 1 : grid_size
-            x,y = (i-1)*h, (j-1)*h 
-            p_n[i,j] = p(x,y,dt*0.5)
-        end
-    end
+    p_n = [p(i * h - 0.5 * h, j * h - 0.5 * h ,dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
 
-    ul2e = 0
-    ulinfe = 0
-    vl2e = 0
-    vlinfe =0
-    pl2e =0
-    plinfe =0
+    ul2e = ulinfe = vl2e = vlinfe = pl2e = plinfe =0
 
     # Time marching
     for n in 1 : Tn
@@ -229,79 +91,45 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
         v_dbc_n(x,y) = v(x,y,tn)
         v_dbc_n_1(x,y) = v(x,y,tn + dt)
 
-        for i in 1 : grid_size_in
-            for j in 1 : grid_size_in
-                x,y = i*h, j *h 
-                u_n_center = u_n[i,j]
-                u_n_left = u_n_right = u_n_down = u_n_up = 0.0
-                u_n_1_left = u_n_1_right = u_n_1_down = u_n_1_up = 0.0
+        # Padding Dirichlet Boundary
+        x1 = 0; x2 = (grid_size - 1) * h; y1 = 0; y2 = (grid_size - 1) * h
+        u_n_1_full = [[u(x1,j*h,tn - dt) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn - dt) for i in 1 : grid_size - 2] u_n_1 [u(i*h,y2,tn - dt) for i in 1 : grid_size - 2]; [u(x2,j*h,tn - dt) for j in 0 : grid_size - 1]']
+        v_n_1_full = [[v(x1,j*h,tn - dt) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn - dt) for i in 1 : grid_size - 2] v_n_1 [v(i*h,y2,tn - dt) for i in 1 : grid_size - 2]; [v(x2,j*h,tn - dt) for j in 0 : grid_size - 1]']
+        u_n_full = [[u(x1,j*h,tn) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn) for i in 1 : grid_size - 2] u_n [u(i*h,y2,tn) for i in 1 : grid_size - 2]; [u(x2,j*h,tn) for j in 0 : grid_size - 1]']
+        v_n_full = [[v(x1,j*h,tn) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn) for i in 1 : grid_size - 2] v_n [v(i*h,y2,tn) for i in 1 : grid_size - 2]; [v(x2,j*h,tn) for j in 0 : grid_size - 1]']
 
-                v_n_center = v_n[i,j]
-                v_n_left = v_n_right = v_n_down = v_n_up = 0.0
-                v_n_1_left = v_n_1_right = v_n_1_down = v_n_1_up = 0.0
-
-                @inbounds u_rhs[i,j] = 0
-                @inbounds v_rhs[i,j] = 0
-
-                if i == 1 
-                    u_n_left = u(x - h,y,tn) # Use Dirichelet boundary condition
-                    v_n_left = v(x - h,y,tn) 
-                    u_n_1_left = u(x - h, y, tn - dt)
-                    v_n_1_left = v(x - h, y, tn - dt)
-                    @inbounds u_rhs[i,j] += beta * u(x - h, y, tn + dt) 
-                    @inbounds v_rhs[i,j] += beta * v(x - h, y, tn + dt)
-                else
-                    u_n_left = @inbounds u_n[i - 1,j]
-                    v_n_left = @inbounds v_n[i - 1,j]
-                    u_n_1_left = @inbounds u_n_1[i-1,j]
-                    v_n_1_left = @inbounds v_n_1[i-1,j]
+        # construct rhs for velocity
+        for i in 2 : grid_size - 1
+            for j in 2 : grid_size - 1
+                x = (i-1) * h; y = (j-1) * h
+                if i == 2
+                    u_rhs[i - 1,j - 1] += beta * u(x - h, y, tn + dt) 
+                    v_rhs[i - 1,j - 1] += beta * v(x - h, y, tn + dt)
                 end
 
-                if i == grid_size_in
-                    u_n_right = u(x + h,y,tn) # Use Dirichelet boundary condition
-                    v_n_right = v(x + h,y,tn)
-                    u_n_1_right = u(x + h, y, tn - dt)
-                    v_n_1_right = v(x + h, y, tn - dt)
-                    @inbounds u_rhs[i,j] += beta * u(x + h, y, tn + dt)
-                    @inbounds v_rhs[i,j] += beta * v(x + h, y, tn + dt)
-                else
-                    u_n_right = @inbounds u_n[i + 1,j]
-                    v_n_right = @inbounds v_n[i + 1,j]
-                    u_n_1_right = @inbounds u_n_1[i + 1,j]
-                    v_n_1_right = @inbounds v_n_1[i + 1,j]
+                if i == grid_size - 1
+                    u_rhs[i - 1,j - 1] += beta * u(x + h, y, tn + dt)
+                    v_rhs[i - 1,j - 1] += beta * v(x + h, y, tn + dt)
                 end
 
-                if j == 1 
-                    u_n_down = u(x, y - h, tn) # Use Dirichelet boundary condition
-                    v_n_down = v(x, y - h, tn)
-                    u_n_1_down = u(x, y - h, tn - dt)
-                    v_n_1_down = v(x, y - h, tn - dt)
-                    @inbounds u_rhs[i,j] += beta * u(x, y - h, tn + dt)
-                    @inbounds v_rhs[i,j] += beta * v(x, y - h, tn + dt)
-                else
-                    u_n_down = @inbounds u_n[i,j - 1]
-                    v_n_down = @inbounds v_n[i,j - 1]
-                    u_n_1_down = @inbounds u_n_1[i,j - 1]
-                    v_n_1_down = @inbounds v_n_1[i,j - 1]
+                if j == 2
+                    u_rhs[i - 1,j - 1] += beta * u(x, y - h, tn + dt)
+                    v_rhs[i - 1,j - 1] += beta * v(x, y - h, tn + dt)
                 end
 
-                if j == grid_size_in 
-                    u_n_up = u(x, y + h, tn) # Use Dirichelet boundary condition
-                    v_n_up = v(x, y + h, tn) 
-                    u_n_1_up = u(x, y + h, tn - dt) 
-                    v_n_1_up = v(x, y + h, tn - dt) 
-                    @inbounds u_rhs[i,j] += beta * u(x, y + h, tn + dt)
-                    @inbounds v_rhs[i,j] += beta * v(x, y + h, tn + dt)
-                else
-                    u_n_up = @inbounds u_n[i,j + 1]
-                    v_n_up = @inbounds v_n[i,j + 1]
-                    u_n_1_up = @inbounds u_n_1[i,j + 1]
-                    v_n_1_up = @inbounds v_n_1[i,j + 1]
+                if j == grid_size - 1
+                    u_rhs[i - 1,j - 1] += beta * u(x, y + h, tn + dt)
+                    v_rhs[i - 1,j - 1] += beta * v(x, y + h, tn + dt)
                 end
 
+                u_n_center = u_n_full[i,j]; u_n_left = u_n_full[i-1,j];u_n_right = u_n_full[i+1,j];u_n_down = u_n_full[i,j-1];u_n_up = u_n_full[i,j+1]
+                u_n_1_left = u_n_1_full[i-1,j]; u_n_1_right = u_n_1_full[i+1,j]; u_n_1_down = u_n_1_full[i,j-1]; u_n_1_up = u_n_1_full[i,j+1]
+
+                v_n_center = v_n_full[i,j]; v_n_left = v_n_full[i-1,j]; v_n_right = v_n_full[i+1,j]; v_n_down = v_n_full[i,j-1]; v_n_up = v_n_full[i,j+1]
+                v_n_1_left = v_n_1_full[i-1,j]; v_n_1_right = v_n_1_full[i+1,j]; v_n_1_down = v_n_1_full[i,j-1]; v_n_1_up = v_n_1_full[i,j+1]
                 # diffuse
-                @inbounds u_rhs[i,j] += alpha2 * u_n_center + beta *(u_n_left + u_n_right + u_n_down + u_n_up)
-                @inbounds v_rhs[i,j] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
+                @inbounds u_rhs[i - 1,j - 1] += alpha2 * u_n_center + beta *(u_n_left + u_n_right + u_n_down + u_n_up)
+                @inbounds v_rhs[i - 1,j - 1] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
 
                 # convection
                 dudx_n_1 = (u_n_1_right - u_n_1_left)/(2*h)#(u(x + h,y,tn - dt) - u(x - h,y,tn - dt))/(2*h)
@@ -316,124 +144,71 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
                 dvdy_n_1 = (v_n_1_up - v_n_1_down)/(2*h)#(v(x,y + h,tn - dt) - v(x,y - h,tn - dt))/(2*h)
                 dvdy_n = (v_n_up - v_n_down)/(2*h)#(v(x,y + h,tn) - v(x,y - h,tn))/(2*h)
                 
-                convect_u_n_1 = u_n_1[i,j] * dudx_n_1 + v_n_1[i,j] * dudy_n_1
-                convect_u_n = u_n[i,j] * dudx_n + v_n[i,j] * dudy_n
+                convect_u_n_1 = u_n_1[i - 1,j - 1] * dudx_n_1 + v_n_1[i - 1,j - 1] * dudy_n_1
+                convect_u_n = u_n[i - 1,j - 1] * dudx_n + v_n[i - 1,j - 1] * dudy_n
 
-                convect_v_n_1 = u_n_1[i,j] * dvdx_n_1 + v_n_1[i,j] * dvdy_n_1
-                convect_v_n = u_n[i,j] * dvdx_n + v_n[i,j] * dvdy_n
+                convect_v_n_1 = u_n_1[i - 1,j - 1] * dvdx_n_1 + v_n_1[i - 1,j - 1] * dvdy_n_1
+                convect_v_n = u_n[i - 1,j - 1] * dvdx_n + v_n[i - 1,j - 1] * dvdy_n
                
-                @inbounds u_rhs[i,j] -=  dt * (1.5 * convect_u_n - 0.5 * convect_u_n_1)
-                @inbounds v_rhs[i,j] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
+                @inbounds u_rhs[i - 1,j - 1] -=  dt * (1.5 * convect_u_n - 0.5 * convect_u_n_1)
+                @inbounds v_rhs[i - 1,j - 1] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
 
-                # lag pressure gradient
-                u_rhs[i,j] -= dt * (p_n[i+2,j+1] - p_n[i,j+1]) / (2*h)
-                v_rhs[i,j] -= dt * (p_n[i+1,j+2] - p_n[i+1,j]) / (2*h)
-                #u_rhs[i,j] -= dt * (p(x+h,y,tn - 0.5*dt) - p(x-h,y,tn - 0.5 *dt)) / (2*h)
-                #v_rhs[i,j] -= dt * (p(x,y + h,tn - 0.5*dt) - p(x,y - h,tn - 0.5*dt)) / (2*h)
+
+                p_left = (p_n[i - 1,j - 1] + p_n[i - 1,j])/2
+                p_right = (p_n[i,j - 1] + p_n[i,j])/2
+                p_down = (p_n[i - 1,j - 1] + p_n[i,j - 1])/2
+                p_up = (p_n[i - 1,j] + p_n[i,j])/2
+
+                dpdx = (p_right - p_left) / h
+                dpdy = (p_up - p_down) / h
+                u_rhs[i - 1,j - 1] -= dt * dpdx
+                v_rhs[i - 1,j - 1] -= dt * dpdy
             end
         end
-
         # solve for u_star
         u_star = reshape(cg(L,vec(u_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
         v_star = reshape(cg(L,vec(v_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
 
+        u_star_full = [[u(x1,j*h,tn + dt) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn + dt) for i in 1 : grid_size - 2] u_star [u(i*h,y2,tn + dt) for i in 1 : grid_size - 2]; [u(x2,j*h,tn + dt) for j in 0 : grid_size - 1]']
+        v_star_full = [[v(x1,j*h,tn + dt) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn + dt) for i in 1 : grid_size - 2] v_star [v(i*h,y2,tn + dt) for i in 1 : grid_size - 2]; [v(x2,j*h,tn + dt) for j in 0 : grid_size - 1]']
+
         #projection
-        #solve for phi
-        phi_rhs = zeros(grid_size,grid_size)
-        #corners
-        x = 0; y = 0
-        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h,y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2 * h,y))/h
-        dvdy = (v_dbc_n_1(x,y + 3*h) - v_dbc_n_1(x,y + h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y + h) + v_dbc_n_1(x, y + 2 * h))/h
-        phi_rhs[1,1] =  -(dudx + dvdy)/4 #divide by four
 
-        x = 0; y = (grid_size_in + 1) * h
-        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h,y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2 * h,y))/h
-        dvdy = (v_dbc_n_1(x,y-h) - v_dbc_n_1(x,y-3*h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y-h) + v_dbc_n_1(x,y - 2*h))/h
-        phi_rhs[1,grid_size] =  -(dudx + dvdy)/4 #divide by four
+        #construct rhs for phi
+        phi_rhs = zeros(p_grid_size,p_grid_size)
 
-        x = (grid_size_in + 1) * h; y = 0
-        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h, y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2*h,y))/h
-        dvdy = (v_dbc_n_1(x,y + 3*h) - v_dbc_n_1(x,y + h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y + h) + v_dbc_n_1(x, y + 2 * h))/h
-        phi_rhs[grid_size,1] =  -(dudx + dvdy)/4 #divide by four
+        for i in 1 : p_grid_size
+            for j in 1 : p_grid_size
+                u_star_left = (u_star_full[i,j] + u_star_full[i,j+1])/2
+                u_star_right = (u_star_full[i+1,j] + u_star_full[i+1,j+1])/2
+                v_star_down = (v_star_full[i,j] + v_star_full[i+1,j])/2
+                v_star_up = (v_star_full[i,j+1] + v_star_full[i+1,j+1])/2
 
-        x = (grid_size_in + 1) * h; y = (grid_size_in + 1) * h
-        dudx = (u_dbc_n_1(x + 3*h,y) - u_dbc_n_1(x + h, y))/(2*h) - 2*(u_dbc_n_1(x,y) - 2 * u_dbc_n_1(x + h,y) + u_dbc_n_1(x + 2*h,y))/h
-        dvdy = (v_dbc_n_1(x,y-h) - v_dbc_n_1(x,y-3*h))/(2*h) - 2*(v_dbc_n_1(x,y) - 2 * v_dbc_n_1(x,y-h) + v_dbc_n_1(x,y - 2*h))/h
-        phi_rhs[grid_size,grid_size] = -(dudx + dvdy)/4 #divide by four
-
-        # boundaries
-        for i in 2 : grid_size - 1
-            x = (i-1) * h; y = 0
-            dudx = (u_dbc_n_1(x+h,y) - u_dbc_n_1(x-h,y))/(2*h)
-            dvdy = (v_star[i - 1,3] - v_star[i - 1,1])/(2*h) - 2*(v_dbc_n_1(x,y) - 2*v_star[i-1,1] + v_star[i-1,2])/h
-            phi_rhs[i,1] = -(dudx + dvdy)/2 #divide by two
-
-            y = (grid_size-1) * h
-            dudx = (u_dbc_n_1(x+h,y) - u_dbc_n_1(x-h,y))/(2*h)
-            dvdy = (v_star[i - 1,grid_size - 3] - v_star[i-1,grid_size - 5])/(2*h) + 2*(v(x,y,tn + dt) - 2*v_star[i-1,grid_size - 2] + v_star[i-1,grid_size - 3])/h
-            phi_rhs[i,grid_size] = -(dudx + dvdy)/2 #divide by two
-        end
-        for j in 2 : grid_size - 1
-            x = 0; y = (j-1) * h
-            dvdy = (v_dbc_n_1(x,y+h) - v_dbc_n_1(x,y-h))/(2*h)
-            dudx = (u_star[3,j - 1] - u_star[1,j - 1])/(2*h) - 2*(u(x,y,tn + dt) - 2*u_star[1,j - 1] + u_star[2,j - 1])/h
-            phi_rhs[1,j] = -(dudx + dvdy)/2 # divide by two
-
-            x = (grid_size-1) * h
-            dvdy = (v_dbc_n_1(x,y+h) - v_dbc_n_1(x,y-h))/(2*h)
-            dudx = (u_star[grid_size - 3,j - 1] - u_star[grid_size - 5,j - 1])/(2*h) + 2*(u_dbc_n_1(x,y) - 2*u_star[grid_size - 2,j - 1] + u_star[grid_size - 3,j - 1])/h
-            phi_rhs[grid_size,j] = -(dudx + dvdy)/2 #divide by two
-        end
-        # interior points
-        for i in 2 : grid_size - 1
-            for j in 2 : grid_size - 1
-                x,y = (i-1) * h, (j-1) * h
-                u_i = i - 1; u_j = j - 1
-                u_left = u_right = 0
-                v_up = v_down = 0
-                if i == 2
-                    u_left = u_dbc_n_1(x - h,y)
-                else
-                    u_left = u_star[u_i - 1,u_j]
-                end
-                if i == grid_size - 1
-                    u_right = u_dbc_n_1(x + h, y)
-                else
-                    u_right = u_star[u_i + 1, u_j]
-                end
-                if j == 2
-                    v_down = v_dbc_n_1(x,y-h)
-                else
-                    v_down = v_star[u_i, u_j - 1]
-                end
-                if j == grid_size - 1
-                    v_up = v_dbc_n_1(x,y+h)
-                else
-                    v_up = v_star[u_i, u_j + 1]
-                end
-
-                dudx = (u_right - u_left)/(2*h)
-                dvdy = (v_up - v_down)/(2*h)
-                phi_rhs[i,j] = -(dudx + dvdy)
+                dudx = (u_star_right - u_star_left) / h
+                dvdy = (v_star_up - v_star_down) / h
+                phi_rhs[i,j] = -(dudx + dvdy) / dt
             end
         end
 
-        phi_rhs_vec = vec(phi_rhs)
-        phi_rhs_mean = mean(phi_rhs_vec)
-        phi_rhs_vec = phi_rhs_vec .- phi_rhs_mean
-        phi = reshape(cg(Lp,phi_rhs_vec,Pl = PreConLp, reltol = 1e-9),grid_size,grid_size)
+        #solve for phi
+        phi_rhs_vec = Sp * vec(phi_rhs)
+        phi = cg(Lp,[phi_rhs_vec; 0],Pl = PreConLp, reltol = 1e-9)
+        #lambda = phi[end]
+        #println("λ : $lambda")
+        phi = reshape(phi[1 : end - 1],p_grid_size,p_grid_size)
 
         # correct velocity field
         for i in 1 : grid_size_in
             for j in 1 : grid_size_in
-                x = i * h; y = j * h
-                # k1 = 0.5; k2 = 0.5
-                # dpdx_old = (p(x + h,y,tn - k1 * dt) - p(x - h,y,tn - k1 * dt)) / (2*h)
-                # dpdx_new = (p(x + h,y,tn + k2 * dt) - p(x - h,y,tn + k2 * dt)) / (2*h)
-                # dpdy_old = (p(x,y + h,tn - k1 * dt) - p(x,y - h,tn - k1 * dt)) / (2*h)
-                # dpdy_new = (p(x,y + h,tn + k2 * dt) - p(x,y - h,tn + k2 * dt)) / (2*h)
-                dphidx = (phi[i+2,j+1] - phi[i,j+1])/(2*h)
-                dphidy = (phi[i+1,j+2] - phi[i+1,j])/(2*h)
+                phi_left = (phi[i,j] + phi[i,j+1])/2
+                phi_right = (phi[i+1,j] + phi[i+1,j+1])/2
+
+                phi_down = (phi[i,j] + phi[i+1,j])/2
+                phi_up = (phi[i,j+1] + phi[i+1,j+1])/2
+
+                dphidx = (phi_right - phi_left)/h
+                dphidy = (phi_up - phi_down)/h
+                
                 u_star[i,j] -= dt * dphidx
                 v_star[i,j] -= dt * dphidy
             end
@@ -443,30 +218,12 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
         v_n_2 = v_star
 
         # update the pressure
-        for i in 1 : grid_size
-            for j in 1 : grid_size
-                phi_left = phi_right = phi_up = phi_down = 0
-                if i == 1
-                    phi_left = phi[i + 1,j]
-                else
-                    phi_left = phi[i - 1,j]
-                end
-                if i == grid_size
-                    phi_right = phi[i - 1,j]
-                else
-                    phi_right = phi[i + 1,j]
-                end
-                if j == 1
-                    phi_down = phi[i, j + 1]
-                else
-                    phi_down = phi[i, j - 1]
-                end
-                if j == grid_size
-                    phi_up = phi[i, j - 1]
-                else
-                    phi_up = phi[i, j + 1]
-                end
-
+        for i in 1 : p_grid_size
+            for j in 1 : p_grid_size
+                phi_left = (i == 1) ? phi[i + 1,j] : phi[i - 1,j]
+                phi_right = (i == p_grid_size) ? phi[i - 1,j] : phi[i + 1,j]
+                phi_down = (j == 1) ? phi[i, j + 1] : phi[i, j - 1]
+                phi_up = (j == p_grid_size) ? phi[i, j - 1] : phi[i, j + 1]
                 p_n[i,j] += phi[i,j] - nu * dt/2 * (-4 * phi[i,j] + phi_left + phi_right + phi_up + phi_down)/(h^2)
             end
         end
@@ -477,26 +234,19 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
 
         global u_n = u_n_2
         global v_n = v_n_2
-        
-        for i in 1 : grid_size_in
-            for j in 1 : grid_size_in
-                x,y = i*h, j *h 
-                @inbounds u_ref[i,j] = u(x,y,tn + dt)
-                @inbounds v_ref[i,j] = v(x,y,tn + dt)   
-            end
-        end
 
-        for i in 1 : grid_size
-            for j in 1 : grid_size
-                x,y = (i-1)*h, (j-1) *h 
-                p_ref[i,j] = p(x,y,tn + dt)
-            end
-        end
+        u_ref = [u(i*h,j*h,tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+        v_ref = [v(i*h,j*h,tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+        p_ref = [p(i * h - 0.5 * h, j * h - 0.5 * h,tn + dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
 
         global uerror = u_n - u_ref
+        plt = surface(abs.(uerror), aspect_ratio=:equal, c=:viridis, title="pointwise error of u")
+        savefig(plt,"res4/pointwise_error/upwe$Tn.png")
         ul2e = norm(uerror,2)/norm(u_ref,2)
         ulinfe = norm(uerror,Inf)/norm(u_ref,Inf)
         global verror = v_n - v_ref
+        plt = surface(abs.(verror), aspect_ratio=:equal, c=:viridis, title="pointwise error of v")
+        savefig(plt,"res4/pointwise_error/vpwe$Tn.png")
         vl2e = norm(verror,2)/norm(v_ref,2)
         vlinfe = norm(verror,Inf)/norm(v_ref,Inf)
         global perror = p_n - p_ref
@@ -526,11 +276,13 @@ pl2s = []
 pl_infs = []
 
 T = 1.0
-
+@time begin
 for Tn in 10 : 100
     dt = Float64(T) / Float64(Tn)
     println("dt : ",dt)
-    ue, ul2error, ulinf_error, ve, vl2error, vlinf_error, pe, pl2error, plinf_error = solve_NS2D_projection(101,Tn,T,false)
+    @time begin
+    ue, ul2error, ulinf_error, ve, vl2error, vlinf_error, pe, pl2error, plinf_error = solve_NS2D_projection(201,Tn,T,false)
+    end
     println("relative l2 for u: ", ul2error)
     println("relative l_inf for u: ", ulinf_error)
     println("relative l2 for v: ", vl2error)
@@ -545,35 +297,36 @@ for Tn in 10 : 100
     push!(pl2s,pl2error)
     push!(pl_infs,plinf_error)
 
-    plt = heatmap(abs.(pe), aspect_ratio=:equal, c=:viridis, title="pointwise error of pressure")
-    savefig(plt,"res3/pointwise_error/ppwe$Tn.png")
+    plt = surface(abs.(pe), aspect_ratio=:equal, c=:viridis, title="pointwise error of pressure")
+    savefig(plt,"res4/pointwise_error/ppwe$Tn.png")
 
     plt = plot(dts,ul2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-    savefig(plt,"res3/udtvsl2.png")
+    savefig(plt,"res4/udtvsl2.png")
     plt = plot(dts,ul_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-    savefig(plt,"res3/udtvslinfty.png")
+    savefig(plt,"res4/udtvslinfty.png")
 
     line(k,x0,y0,x) = 2 .^(log2(y0) + k * (log2(x) - log2(x0)))
     plt = plot(dts,[ul2s,line.(1,dts[end],ul2s[end],dts),line.(2,dts[end],ul2s[end],dts), line.(3,dts[end],ul2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res3/udtvsl2loglog.png")
+    savefig(plt,"res4/udtvsl2loglog.png")
     plt = plot(dts,[ul_infs,line.(1,dts[end],ul_infs[end],dts),line.(2,dts[end],ul_infs[end],dts), line.(3,dts[end],ul_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res3/udtvslinftyloglog.png")
+    savefig(plt,"res4/udtvslinftyloglog.png")
 
     plt = plot(dts,vl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-    savefig(plt,"res3/vdtvsl2.png")
+    savefig(plt,"res4/vdtvsl2.png")
     plt = plot(dts,vl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-    savefig(plt,"res3/vdtvslinfty.png")
+    savefig(plt,"res4/vdtvslinfty.png")
     plt = plot(dts,[vl2s,line.(1,dts[end],vl2s[end],dts),line.(2,dts[end],vl2s[end],dts), line.(3,dts[end],vl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res3/vdtvsl2loglog.png")
+    savefig(plt,"res4/vdtvsl2loglog.png")
     plt = plot(dts,[vl_infs,line.(1,dts[end],vl_infs[end],dts),line.(2,dts[end],vl_infs[end],dts), line.(3,dts[end],vl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res3/vdtvslinftyloglog.png")
+    savefig(plt,"res4/vdtvslinftyloglog.png")
 
     plt = plot(dts,pl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-    savefig(plt,"res3/pdtvsl2.png")
+    savefig(plt,"res4/pdtvsl2.png")
     plt = plot(dts,pl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-    savefig(plt,"res3/pdtvslinfty.png")
+    savefig(plt,"res4/pdtvslinfty.png")
     plt = plot(dts,[pl2s,line.(1,dts[end],pl2s[end],dts),line.(2,dts[end],pl2s[end],dts), line.(3,dts[end],pl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res3/pdtvsl2loglog.png")
+    savefig(plt,"res4/pdtvsl2loglog.png")
     plt = plot(dts,[pl_infs,line.(1,dts[end],pl_infs[end],dts),line.(2,dts[end],pl_infs[end],dts), line.(3,dts[end],pl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res3/pdtvslinftyloglog.png")
+    savefig(plt,"res4/pdtvslinftyloglog.png")
 end
+end 

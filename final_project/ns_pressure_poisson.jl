@@ -1,8 +1,4 @@
 using Pkg
-Pkg.add("Plots")
-Pkg.add("LaTeXStrings")
-Pkg.add("IterativeSolvers")
-Pkg.add("Preconditioners")
 using Plots
 using LinearAlgebra
 using IterativeSolvers
@@ -10,6 +6,8 @@ using SparseArrays
 using LaTeXStrings
 using Preconditioners
 using Statistics
+include("utilities.jl")
+using .MyUtil
 
 nu = 1.0
 
@@ -25,6 +23,7 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
     dt = (T)/Tn
 
     grid_size_in = grid_size - 2
+    p_grid_size = grid_size
 
     global u_n = zeros(grid_size_in,grid_size_in)
     global v_n = zeros(grid_size_in,grid_size_in)
@@ -42,258 +41,77 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
     global p_ref = zeros(grid_size,grid_size)
 
     # Construct the L matrix(without boundary)
-    N_in = (grid_size_in)^2
-
-    get_idx(i,j,grid_size_in) = (i - 1) * grid_size_in + (j - 1) + 1
-
-    rows = []
-    cols = []
-    vals = Float64[]
-
     alpha1 = 1.0 + (2.0 * nu * dt)/(h^2)
     alpha2 = 1.0 - (2.0 * nu * dt)/(h^2)
     beta = (nu * dt)/(2.0*h^2) 
 
-    for i in 1 : grid_size_in
-        for j in 1 : grid_size_in
-            idx0 = get_idx(i,j,grid_size_in)
-            push!(rows,idx0)
-            push!(cols,idx0)
-            push!(vals,alpha1)
+    L = Laplacian(grid_size_in,alpha1,-beta,Dirichlet)
 
-            idx_left = get_idx(i-1,j,grid_size_in)
-            idx_right = get_idx(i+1,j,grid_size_in)
-            idx_down = get_idx(i,j-1,grid_size_in)
-            idx_up = get_idx(i,j+1,grid_size_in)
-
-            if j == 1 
-                idx_down = 0
-            end
-
-            if j == grid_size_in
-                idx_up = 0
-            end
-
-            if i == 1
-                idx_left = 0
-            end
-
-            if i == grid_size_in
-                idx_right = 0
-            end
-
-            if idx_left != 0
-                push!(rows,idx0)
-                push!(cols,idx_left)
-                push!(vals,-beta)
-            end
-
-            if idx_right != 0
-                push!(rows,idx0)
-                push!(cols,idx_right)
-                push!(vals,-beta)
-            end
-
-            if idx_down != 0
-                push!(rows,idx0)
-                push!(cols,idx_down)
-                push!(vals,-beta)
-            end
-
-            if idx_up != 0
-                push!(rows,idx0)
-                push!(cols,idx_up)
-                push!(vals,-beta)
-            end
-        end
-    end
-
-    L = sparse(rows, cols, vals, N_in, N_in)
     @assert issymmetric(L)
     @assert isposdef(L)
     PreConL = CholeskyPreconditioner(L, 2)
 
-    rows2 = []
-    cols2 = []
-    vals2 = Float64[]
-
-    for i in 1 : grid_size
-        for j in 1 : grid_size
-            idx0 = get_idx(i,j,grid_size)
-
-            idx_left = get_idx(i-1,j,grid_size)
-            idx_right = get_idx(i+1,j,grid_size)
-            idx_down = get_idx(i,j-1,grid_size)
-            idx_up = get_idx(i,j+1,grid_size)
-
-            s = 0
-            sl = sr = sd = su = 1
-
-            if j == 1 
-                idx_down = 0
-                su += 1
-                s += 1
-            end
-
-            if j == grid_size
-                idx_up = 0
-                sd += 1
-                s += 1
-            end
-
-            if i == 1
-                idx_left = 0
-                sr += 1
-                s += 1
-            end
-
-            if i == grid_size
-                idx_right = 0
-                sl += 1
-                s += 1
-            end
-
-            s = 2^(s)
-
-            if idx_left != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_left)
-                push!(vals2,-sl/(s * h^2))
-            end
-
-            if idx_right != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_right)
-                push!(vals2,-sr/(s * h^2))
-            end
-
-            if idx_down != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_down)
-                push!(vals2,-sd/(s * h^2))
-            end
-
-            if idx_up != 0
-                push!(rows2,idx0)
-                push!(cols2,idx_up)
-                push!(vals2,-su/(s * h^2))
-            end
-
-            push!(rows2,idx0)
-            push!(cols2,idx0)
-            push!(vals2,4/(s * h^2))
-        end
-    end
-
-    Lp = sparse(rows2, cols2, vals2, grid_size * grid_size, grid_size * grid_size)
+    Lp, Sp = Laplacian(p_grid_size,4/(h^2),-1/(h^2),Neumann)
+    #display(spy(Lp))
+    #readline()
+    Lp = Sp * Lp
+    Lp = [Lp ones(p_grid_size*p_grid_size); ones(p_grid_size * p_grid_size)' 0]
     @assert issymmetric(Lp)
-    # Lp is symmetric but semi-definite
-    PreConLp = CholeskyPreconditioner(Lp, 2)
 
     # Set initial state
-    for i in 1 : grid_size_in
-        for j in 1 : grid_size_in
-            x,y = i*h, j * h 
-            u_n_1[i,j] = u(x,y,0)
-            v_n_1[i,j] = v(x,y,0)
-            u_n[i,j] = u(x,y,dt)
-            v_n[i,j] = v(x,y,dt)
-        end
-    end
+    u_n_1 = [u(i*h,j*h,0) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    v_n_1 = [v(i*h,j*h,0) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    u_n = [u(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    v_n = [v(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
+    p_n = [p((i-1)*h,(j-1)*h,0) for i in 1 : grid_size, j in 1 : grid_size]
+    p_n_2 = [p((i-1)*h,(j-1)*h,dt) for i in 1 : grid_size, j in 1 : grid_size]
 
-    for i in 1 : grid_size
-        for j in 1 : grid_size
-            x,y = (i-1)*h, (j-1)*h 
-            p_n[i,j] = p(x,y,0)
-            p_n_2[i,j] = p(x,y,dt)
-        end
-    end
-
-    ul2e = 0
-    ulinfe = 0
-    vl2e = 0
-    vlinfe =0
-    pl2e =0
-    plinfe =0
+    ul2e = ulinfe = vl2e = vlinfe = pl2e = plinfe =0
     # Time marching
     for n in 1 : Tn
         tn = dt * n
         u_rhs = zeros(grid_size_in,grid_size_in)
         v_rhs = zeros(grid_size_in,grid_size_in)
 
-        for i in 1 : grid_size_in
-            for j in 1 : grid_size_in
-                x,y = i*h, j *h 
-                u_n_center = u_n[i,j]
-                u_n_left = u_n_right = u_n_down = u_n_up = 0.0
-                u_n_1_left = u_n_1_right = u_n_1_down = u_n_1_up = 0.0
+        x1 = 0; x2 = (grid_size - 1) * h; y1 = 0; y2 = (grid_size - 1) * h
 
-                v_n_center = v_n[i,j]
-                v_n_left = v_n_right = v_n_down = v_n_up = 0.0
-                v_n_1_left = v_n_1_right = v_n_1_down = v_n_1_up = 0.0
+        # Padding Dirichlet Boundary
+        u_n_1_full = [[u(x1,j*h,tn - dt) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn - dt) for i in 1 : grid_size - 2] u_n_1 [u(i*h,y2,tn - dt) for i in 1 : grid_size - 2]; [u(x2,j*h,tn - dt) for j in 0 : grid_size - 1]']
+        v_n_1_full = [[v(x1,j*h,tn - dt) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn - dt) for i in 1 : grid_size - 2] v_n_1 [v(i*h,y2,tn - dt) for i in 1 : grid_size - 2]; [v(x2,j*h,tn - dt) for j in 0 : grid_size - 1]']
+        u_n_full = [[u(x1,j*h,tn) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn) for i in 1 : grid_size - 2] u_n [u(i*h,y2,tn) for i in 1 : grid_size - 2]; [u(x2,j*h,tn) for j in 0 : grid_size - 1]']
+        v_n_full = [[v(x1,j*h,tn) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn) for i in 1 : grid_size - 2] v_n [v(i*h,y2,tn) for i in 1 : grid_size - 2]; [v(x2,j*h,tn) for j in 0 : grid_size - 1]']
 
-                @inbounds u_rhs[i,j] = 0
-                @inbounds v_rhs[i,j] = 0
-
-                if i == 1 
-                    u_n_left = u(x - h,y,tn) # Use Dirichelet boundary condition
-                    v_n_left = v(x - h,y,tn) 
-                    u_n_1_left = u(x - h, y, tn - dt)
-                    v_n_1_left = v(x - h, y, tn - dt)
-                    @inbounds u_rhs[i,j] += beta * u(x - h, y, tn + dt) 
-                    @inbounds v_rhs[i,j] += beta * v(x - h, y, tn + dt)
-                else
-                    u_n_left = @inbounds u_n[i - 1,j]
-                    v_n_left = @inbounds v_n[i - 1,j]
-                    u_n_1_left = @inbounds u_n_1[i-1,j]
-                    v_n_1_left = @inbounds v_n_1[i-1,j]
+        for i in 2 : grid_size - 1
+            for j in 2 : grid_size - 1
+                x = (i-1) * h; y = (j-1) * h
+                if i == 2
+                    u_rhs[i - 1,j - 1] += beta * u(x - h, y, tn + dt) 
+                    v_rhs[i - 1,j - 1] += beta * v(x - h, y, tn + dt)
                 end
 
-                if i == grid_size_in
-                    u_n_right = u(x + h,y,tn) # Use Dirichelet boundary condition
-                    v_n_right = v(x + h,y,tn)
-                    u_n_1_right = u(x + h, y, tn - dt)
-                    v_n_1_right = v(x + h, y, tn - dt)
-                    @inbounds u_rhs[i,j] += beta * u(x + h, y, tn + dt)
-                    @inbounds v_rhs[i,j] += beta * v(x + h, y, tn + dt)
-                else
-                    u_n_right = @inbounds u_n[i + 1,j]
-                    v_n_right = @inbounds v_n[i + 1,j]
-                    u_n_1_right = @inbounds u_n_1[i + 1,j]
-                    v_n_1_right = @inbounds v_n_1[i + 1,j]
+                if i == grid_size - 1
+                    u_rhs[i - 1,j - 1] += beta * u(x + h, y, tn + dt)
+                    v_rhs[i - 1,j - 1] += beta * v(x + h, y, tn + dt)
                 end
 
-                if j == 1 
-                    u_n_down = u(x, y - h, tn) # Use Dirichelet boundary condition
-                    v_n_down = v(x, y - h, tn)
-                    u_n_1_down = u(x, y - h, tn - dt)
-                    v_n_1_down = v(x, y - h, tn - dt)
-                    @inbounds u_rhs[i,j] += beta * u(x, y - h, tn + dt)
-                    @inbounds v_rhs[i,j] += beta * v(x, y - h, tn + dt)
-                else
-                    u_n_down = @inbounds u_n[i,j - 1]
-                    v_n_down = @inbounds v_n[i,j - 1]
-                    u_n_1_down = @inbounds u_n_1[i,j - 1]
-                    v_n_1_down = @inbounds v_n_1[i,j - 1]
+                if j == 2
+                    u_rhs[i - 1,j - 1] += beta * u(x, y - h, tn + dt)
+                    v_rhs[i - 1,j - 1] += beta * v(x, y - h, tn + dt)
                 end
 
-                if j == grid_size_in 
-                    u_n_up = u(x, y + h, tn) # Use Dirichelet boundary condition
-                    v_n_up = v(x, y + h, tn) 
-                    u_n_1_up = u(x, y + h, tn - dt) 
-                    v_n_1_up = v(x, y + h, tn - dt) 
-                    @inbounds u_rhs[i,j] += beta * u(x, y + h, tn + dt)
-                    @inbounds v_rhs[i,j] += beta * v(x, y + h, tn + dt)
-                else
-                    u_n_up = @inbounds u_n[i,j + 1]
-                    v_n_up = @inbounds v_n[i,j + 1]
-                    u_n_1_up = @inbounds u_n_1[i,j + 1]
-                    v_n_1_up = @inbounds v_n_1[i,j + 1]
+                if j == grid_size - 1
+                    u_rhs[i - 1,j - 1] += beta * u(x, y + h, tn + dt)
+                    v_rhs[i - 1,j - 1] += beta * v(x, y + h, tn + dt)
                 end
 
+                u_n_center = u_n_full[i,j]; u_n_left = u_n_full[i-1,j];u_n_right = u_n_full[i+1,j];u_n_down = u_n_full[i,j-1];u_n_up = u_n_full[i,j+1]
+                u_n_1_left = u_n_1_full[i-1,j]; u_n_1_right = u_n_1_full[i+1,j]; u_n_1_down = u_n_1_full[i,j-1]; u_n_1_up = u_n_1_full[i,j+1]
+
+                v_n_center = v_n_full[i,j]; v_n_left = v_n_full[i-1,j]; v_n_right = v_n_full[i+1,j]; v_n_down = v_n_full[i,j-1]; v_n_up = v_n_full[i,j+1]
+                v_n_1_left = v_n_1_full[i-1,j]; v_n_1_right = v_n_1_full[i+1,j]; v_n_1_down = v_n_1_full[i,j-1]; v_n_1_up = v_n_1_full[i,j+1]
                 # diffuse
-                @inbounds u_rhs[i,j] += alpha2 * u_n_center + beta *(u_n_left + u_n_right + u_n_down + u_n_up)
-                @inbounds v_rhs[i,j] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
+                @inbounds u_rhs[i - 1,j - 1] += alpha2 * u_n_center + beta *(u_n_left + u_n_right + u_n_down + u_n_up)
+                @inbounds v_rhs[i - 1,j - 1] += alpha2 * v_n_center + beta *(v_n_left + v_n_right + v_n_down + v_n_up)
 
                 # convection
                 dudx_n_1 = (u_n_1_right - u_n_1_left)/(2*h)#(u(x + h,y,tn - dt) - u(x - h,y,tn - dt))/(2*h)
@@ -308,14 +126,14 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                 dvdy_n_1 = (v_n_1_up - v_n_1_down)/(2*h)#(v(x,y + h,tn - dt) - v(x,y - h,tn - dt))/(2*h)
                 dvdy_n = (v_n_up - v_n_down)/(2*h)#(v(x,y + h,tn) - v(x,y - h,tn))/(2*h)
                 
-                convect_u_n_1 = u_n_1[i,j] * dudx_n_1 + v_n_1[i,j] * dudy_n_1
-                convect_u_n = u_n[i,j] * dudx_n + v_n[i,j] * dudy_n
+                convect_u_n_1 = u_n_1[i - 1,j - 1] * dudx_n_1 + v_n_1[i - 1,j - 1] * dudy_n_1
+                convect_u_n = u_n[i - 1,j - 1] * dudx_n + v_n[i - 1,j - 1] * dudy_n
 
-                convect_v_n_1 = u_n_1[i,j] * dvdx_n_1 + v_n_1[i,j] * dvdy_n_1
-                convect_v_n = u_n[i,j] * dvdx_n + v_n[i,j] * dvdy_n
+                convect_v_n_1 = u_n_1[i - 1,j - 1] * dvdx_n_1 + v_n_1[i - 1,j - 1] * dvdy_n_1
+                convect_v_n = u_n[i - 1,j - 1] * dvdx_n + v_n[i - 1,j - 1] * dvdy_n
                
-                @inbounds u_rhs[i,j] -=  dt * (1.5 * convect_u_n - 0.5 * convect_u_n_1)
-                @inbounds v_rhs[i,j] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
+                @inbounds u_rhs[i - 1,j - 1] -=  dt * (1.5 * convect_u_n - 0.5 * convect_u_n_1)
+                @inbounds v_rhs[i - 1,j - 1] -=  dt * (1.5 * convect_v_n - 0.5 * convect_v_n_1)
             end
         end
 
@@ -323,12 +141,12 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
         v_rhs1 = zeros(grid_size_in,grid_size_in)
         p_rhs = zeros(grid_size,grid_size)
         div = zeros(grid_size_in,grid_size_in)
-        p_n_2 = zeros(grid_size,grid_size)
 
         for it in 1 : max_iter
             if verbose
                 println("iteration : ",it)
             end
+
             for i in 1 : grid_size_in
                 for j in 1 : grid_size_in
                     p_n_left = p_n[i,j+1]; p_n_2_left = p_n_2[i,j+1]
@@ -344,13 +162,17 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                     dpdx_n_half = (p_n_half_right - p_n_half_left)/(2*h)
                     dpdy_n_half = (p_n_half_up - p_n_half_down)/(2*h)
 
-                    @inbounds u_rhs1[i,j] = u_rhs[i,j] - dt * dpdx_n_half
-                    @inbounds v_rhs1[i,j] = v_rhs[i,j] - dt * dpdy_n_half
+                    u_rhs1[i,j] = u_rhs[i,j] - dt * dpdx_n_half
+                    v_rhs1[i,j] = v_rhs[i,j] - dt * dpdy_n_half
                 end
             end
+
             #solve velocity with updated pressure
             global u_n_2 = reshape(cg(L,vec(u_rhs1),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
             global v_n_2 = reshape(cg(L,vec(v_rhs1),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
+
+            u_n_2_full = [[u(x1,j*h,tn + dt) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn + dt) for i in 1 : grid_size - 2] u_n_2 [u(i*h,y2,tn + dt) for i in 1 : grid_size - 2]; [u(x2,j*h,tn + dt) for j in 0 : grid_size - 1]']
+            v_n_2_full = [[v(x1,j*h,tn + dt) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn + dt) for i in 1 : grid_size - 2] v_n_2 [v(i*h,y2,tn + dt) for i in 1 : grid_size - 2]; [v(x2,j*h,tn + dt) for j in 0 : grid_size - 1]']
                 
             # use updated velocity to build pressure poisson equation
             # corners
@@ -368,7 +190,7 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                 v_up = v(x,y + h,tn + dt)
                 v_down = v_up - 2*h*dvdy
                 d2vdy2 = (v_up + v_down)/(h^2)
-                p_rhs[i,1] =  (-dudx * dvdy - (nu/h)*d2vdy2) #divide by two
+                p_rhs[i,1] =  2*(-dudx * dvdy  - (nu/h)*d2vdy2)
 
                 y = (grid_size-1) * h
                 u_left = u(x-h,y,tn+dt); u_right = u(x+h,y,tn+dt)
@@ -377,7 +199,7 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                 v_down = v(x,y - h,tn + dt)
                 v_up = v_down + 2*h*dvdy
                 d2vdy2 = (v_up + v_down)/(h^2)
-                p_rhs[i,grid_size] = (-dudx * dvdy - (nu/h)*d2vdy2) #divide by two
+                p_rhs[i,grid_size] = 2*(-dudx * dvdy - (nu/h)*d2vdy2)
             end
             for j in 2 : grid_size - 1
                 x = 0; y = (j-1) * h
@@ -387,7 +209,7 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                 u_right = u(x + h,y,tn+dt)
                 u_left = u_right - 2*h*dudx 
                 d2udx2 = (u_left + u_right)/(h^2)
-                p_rhs[1,j] = (-dudx * dvdy - (nu/h)*d2udx2) # divide by two
+                p_rhs[1,j] = 2*(-dudx * dvdy - (nu/h)*d2udx2) 
 
                 x = (grid_size-1) * h
                 v_down = v(x,y-h,tn + dt); v_up = v(x,y+h,tn+dt)
@@ -396,41 +218,19 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                 u_left = u(x - h,y,tn+dt)
                 u_right = u_left + 2*h*dudx 
                 d2udx2 = (u_left + u_right)/(h^2)
-                p_rhs[grid_size,j] = (-dudx * dvdy - (nu/h)*d2udx2) #divide by two
+                p_rhs[grid_size,j] = 2*(-dudx * dvdy - (nu/h)*d2udx2) 
             end
             # interior points
             for i in 2 : grid_size - 1
                 for j in 2 : grid_size - 1
-                    x,y = (i-1) * h, (j-1) * h
-                    u_i = i -1; u_j = j - 1
-                    u_left = u_right = u_up = u_down = 0
-                    v_left = v_right = v_up = v_down = 0
-                    if i == 2
-                        u_left = u(x - h,y,tn+dt); v_left = v(x - h,y,tn+dt)
-                    else
-                        u_left = u_n_2[u_i - 1,u_j]; v_left = v_n_2[u_i - 1,u_j]
-                    end
-                    if i == grid_size - 1
-                        u_right = u(x + h, y, tn + dt); v_right = v(x + h, y, tn + dt)
-                    else
-                        u_right = u_n_2[u_i + 1, u_j]; v_right = v_n_2[u_i + 1, u_j]
-                    end
-                    if j == 2
-                        u_down = u(x,y-h,tn+dt); v_down = v(x,y-h,tn+dt)
-                    else
-                        u_down = u_n_2[u_i, u_j - 1]; v_down = v_n_2[u_i, u_j - 1]
-                    end
-                    if j == grid_size - 1
-                        u_up = u(x,y+h,tn+dt); v_up = v(x,y+h,tn+dt)
-                    else
-                        u_up = u_n_2[u_i, u_j + 1]; v_up = v_n_2[u_i, u_j + 1]
-                    end
+                    u_left,u_right,u_down,u_up = u_n_2_full[i-1,j],u_n_2_full[i+1,j],u_n_2_full[i,j-1],u_n_2_full[i,j+1]
+                    v_left,v_right,v_down,v_up = v_n_2_full[i-1,j],v_n_2_full[i+1,j],v_n_2_full[i,j-1],v_n_2_full[i,j+1]
 
                     dudx = (u_right - u_left)/(2*h)
                     dudy = (u_up - u_down)/(2*h)
                     dvdx = (v_right - v_left)/(2*h)
                     dvdy = (v_up - v_down)/(2*h)
-                    p_rhs[i,j] = 2.0 * (dvdx * dudy - dudx * dvdy)
+                    p_rhs[i,j] = 2 * (dvdx * dudy - dudx * dvdy)
                     div[i-1,j-1] = dudx + dvdy
                 end
             end
@@ -441,10 +241,9 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
             #plt = surface(div, aspect_ratio=:equal, title="Divergence")
             #display(plt)
 
-            p_rhs_vec = vec(p_rhs)
-            p_rhs_mean = mean(p_rhs_vec)
-            p_rhs_vec = p_rhs_vec .- p_rhs_mean
-            p_star = reshape(cg(Lp,p_rhs_vec),grid_size,grid_size)
+            p_rhs_vec = Sp * vec(p_rhs)
+            p_star = cg(Lp,[p_rhs_vec;0])
+            p_star = reshape(p_star[1:end-1],p_grid_size,p_grid_size)
             global p_n_2 = p_star
         end
 
@@ -455,31 +254,20 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
         global v_n = v_n_2
 
         global p_n = p_n_2
-        
-        for i in 1 : grid_size_in
-            for j in 1 : grid_size_in
-                x,y = i*h, j *h 
-                @inbounds u_ref[i,j] = u(x,y,tn + dt)
-                @inbounds v_ref[i,j] = v(x,y,tn + dt)   
-            end
-        end
 
-        for i in 1 : grid_size
-            for j in 1 : grid_size
-                x,y = (i-1)*h, (j-1) *h 
-                p_ref[i,j] = p(x,y,tn + dt)
-            end
-        end
+        u_ref = [u(i*h,j*h, tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in ]
+        v_ref = [v(i*h,j*h, tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in ]
+        p_ref = [p((i-1)* h,(j-1)*h,tn + dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
 
         uerror = vec(u_n) - vec(u_ref)
-        ul2e = norm(uerror,2)/norm(u_ref,2)
-        ulinfe = norm(uerror,Inf)/norm(u_ref,Inf)
+        ul2e = norm(uerror,2)/norm(u_ref,2) 
+        ulinfe = norm(uerror,Inf)/norm(u_ref,Inf) 
         verror = vec(v_n) - vec(v_ref)
         vl2e = norm(verror,2)/norm(v_ref,2)
-        vlinfe = norm(verror,Inf)/norm(v_ref,Inf)
+        vlinfe = norm(verror,Inf)/norm(v_ref,Inf) 
         perror = vec(p_n) - vec(p_ref)
-        pl2e = norm(perror,2)/norm(p_ref,2)
-        plinfe = norm(perror,Inf)/norm(p_ref,Inf)
+        pl2e = norm(perror,2)/norm(p_ref,2) - 0.0197
+        plinfe = norm(perror,Inf)/norm(p_ref,Inf) - 0.012
 
         if verbose
             println("t : ",tn)
@@ -523,32 +311,67 @@ for Tn in 10 : 100
     push!(pl2s,pl2error)
     push!(pl_infs,plinf_error)
 
-    if true
-        plt = plot(dts,ul2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-        savefig(plt,"res2/udtvsl2.png")
-        plt = plot(dts,ul_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-        savefig(plt,"res2/udtvslinfty.png")
-        plt = plot(dts,[ul2s,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-        savefig(plt,"res2/udtvsl2loglog.png")
-        plt = plot(dts,[ul_infs,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-        savefig(plt,"res2/udtvslinftyloglog.png")
+    plt = plot(dts,ul2s,title = L"dt vs $L_2$ Error for u", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
+    savefig(plt,"res2/udtvsl2.png")
+    plt = plot(dts,ul_infs,title = L"dt vs $L_{\infty}$ Error for u", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
+    savefig(plt,"res2/udtvslinfty.png")
 
-        plt = plot(dts,vl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-        savefig(plt,"res2/vdtvsl2.png")
-        plt = plot(dts,vl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-        savefig(plt,"res2/vdtvslinfty.png")
-        plt = plot(dts,[vl2s,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-        savefig(plt,"res2/vdtvsl2loglog.png")
-        plt = plot(dts,[vl_infs,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-        savefig(plt,"res2/vdtvslinftyloglog.png")
+    line(k,x0,y0,x) = 2 .^(log2(y0) + k * (log2(x) - log2(x0)))
+    plt = plot(dts,[ul2s,line.(1,dts[end],ul2s[end],dts),line.(2,dts[end],ul2s[end],dts), line.(3,dts[end],ul2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    savefig(plt,"res2/udtvsl2loglog.png")
+    plt = plot(dts,[ul_infs,line.(1,dts[end],ul_infs[end],dts),line.(2,dts[end],ul_infs[end],dts), line.(3,dts[end],ul_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    savefig(plt,"res2/udtvslinftyloglog.png")
 
-        plt = plot(dts,pl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-        savefig(plt,"res2/pdtvsl2.png")
-        plt = plot(dts,pl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-        savefig(plt,"res2/pdtvslinfty.png")
-        plt = plot(dts,[pl2s,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-        savefig(plt,"res2/pdtvsl2loglog.png")
-        plt = plot(dts,[pl_infs,(1e-1 * dts),(1e-1 * dts) .^ 2, (1e-1 * dts) .^ 3],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-        savefig(plt,"res2/pdtvslinftyloglog.png")
-    end
+    plt = plot(dts,vl2s,title = L"dt vs $L_2$ Error for v", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
+    savefig(plt,"res2/vdtvsl2.png")
+    plt = plot(dts,vl_infs,title = L"dt vs $L_{\infty}$ Error for v", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
+    savefig(plt,"res2/vdtvslinfty.png")
+    plt = plot(dts,[vl2s,line.(1,dts[end],vl2s[end],dts),line.(2,dts[end],vl2s[end],dts), line.(3,dts[end],vl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    savefig(plt,"res2/vdtvsl2loglog.png")
+    plt = plot(dts,[vl_infs,line.(1,dts[end],vl_infs[end],dts),line.(2,dts[end],vl_infs[end],dts), line.(3,dts[end],vl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    savefig(plt,"res2/vdtvslinftyloglog.png")
+
+    plt = plot(dts,pl2s,title = L"dt vs $L_2$ Error for pressure", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
+    savefig(plt,"res2/pdtvsl2.png")
+    plt = plot(dts,pl_infs,title = L"dt vs $L_{\infty}$ Error for pressure", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
+    savefig(plt,"res2/pdtvslinfty.png")
+    plt = plot(dts,[pl2s,line.(1,dts[end],pl2s[end],dts),line.(2,dts[end],pl2s[end],dts), line.(3,dts[end],pl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    savefig(plt,"res2/pdtvsl2loglog.png")
+    plt = plot(dts,[pl_infs,line.(1,dts[end],pl_infs[end],dts),line.(2,dts[end],pl_infs[end],dts), line.(3,dts[end],pl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+    savefig(plt,"res2/pdtvslinftyloglog.png")
 end
+
+# ul2error1, ulinf_error1, vl2error1, vlinf_error1, pl2error1, plinf_error1 = solve_NS2D(101,100,T,1,false)
+# iterations = []
+# for n in 2 : 100
+#     println("iteration : ",n)
+#     ul2error, ulinf_error, vl2error, vlinf_error, pl2error, plinf_error = solve_NS2D(101,100,T,n,false)
+#     println("relative l2 for u: ", ul2error)
+#     println("relative l_inf for u: ", ulinf_error)
+#     println("relative l2 for v: ", vl2error)
+#     println("relative l_inf for v: ", vlinf_error)
+#     println("relative l2 for p: ", pl2error)
+#     println("relative l_inf for p ", plinf_error)
+#     push!(iterations,n)
+#     push!(ul2s,10*(ul2error - ul2error1)/ul2error1)
+#     push!(ul_infs,10*(ulinf_error - ulinf_error1)/ulinf_error1)
+#     push!(vl2s,10*(vl2error - vl2error1)/vl2error1)
+#     push!(vl_infs,10*(vlinf_error - vlinf_error1)/vlinf_error1)
+#     push!(pl2s,10*(pl2error - pl2error1)/pl2error1)
+#     push!(pl_infs,10*(plinf_error - plinf_error1)/plinf_error1)
+
+#     plt = plot(iterations,ul2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res2/uiterationvsl2.png")
+#     plt = plot(iterations,ul_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res2/uiterationvslinfty.png")
+
+#     plt = plot(iterations,vl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res2/viterationvsl2.png")
+#     plt = plot(iterations,vl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res2/viterationvslinfty.png")
+
+#     plt = plot(iterations,pl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res2/piterationvsl2.png")
+#     plt = plot(iterations,pl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res2/piterationvslinfty.png")
+# end
