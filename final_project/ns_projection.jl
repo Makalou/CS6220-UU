@@ -12,6 +12,7 @@ using LaTeXStrings
 using Preconditioners
 using BenchmarkTools
 using IncompleteLU
+using Statistics
 include("utilities.jl")
 using .MyUtil
 
@@ -75,7 +76,8 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
     u_n = [u(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
     v_n = [v(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
 
-    p_n = [p(i * h - 0.5 * h, j * h - 0.5 * h ,dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
+    p_n = [p(i * h - 0.5 * h, j * h - 0.5 * h ,0.5 * dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
+    p_n .-= mean(p_n)
 
     ul2e = ulinfe = vl2e = vlinfe = pl2e = plinfe =0
 
@@ -98,6 +100,7 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
         u_n_full = [[u(x1,j*h,tn) for j in 0 : grid_size - 1]';  [u(i*h,y1,tn) for i in 1 : grid_size - 2] u_n [u(i*h,y2,tn) for i in 1 : grid_size - 2]; [u(x2,j*h,tn) for j in 0 : grid_size - 1]']
         v_n_full = [[v(x1,j*h,tn) for j in 0 : grid_size - 1]';  [v(i*h,y1,tn) for i in 1 : grid_size - 2] v_n [v(i*h,y2,tn) for i in 1 : grid_size - 2]; [v(x2,j*h,tn) for j in 0 : grid_size - 1]']
 
+        div = zeros(grid_size_in,grid_size_in)
         # construct rhs for velocity
         for i in 2 : grid_size - 1
             for j in 2 : grid_size - 1
@@ -163,8 +166,11 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
                 dpdy = (p_up - p_down) / h
                 u_rhs[i - 1,j - 1] -= dt * dpdx
                 v_rhs[i - 1,j - 1] -= dt * dpdy
+                div[i-1,j-1] = dudx_n + dvdy_n
             end
         end
+        plt = surface(abs.(div), aspect_ratio=:equal, c=:viridis, title="pointwise error of u")
+        savefig(plt,"res3/pointwise_error/div$Tn.png")
         # solve for u_star
         u_star = reshape(cg(L,vec(u_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
         v_star = reshape(cg(L,vec(v_rhs),Pl = PreConL, reltol = 1e-9),grid_size_in,grid_size_in)
@@ -224,7 +230,7 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
                 phi_right = (i == p_grid_size) ? phi[i - 1,j] : phi[i + 1,j]
                 phi_down = (j == 1) ? phi[i, j + 1] : phi[i, j - 1]
                 phi_up = (j == p_grid_size) ? phi[i, j - 1] : phi[i, j + 1]
-                p_n[i,j] += phi[i,j] - nu * dt/2 * (-4 * phi[i,j] + phi_left + phi_right + phi_up + phi_down)/(h^2)
+                p_n[i,j] += phi[i,j] #- nu * dt/2 * (-4 * phi[i,j] + phi_left + phi_right + phi_up + phi_down)/(h^2)
             end
         end
 
@@ -237,7 +243,8 @@ function solve_NS2D_projection(grid_size, Tn,T,verbose = false)
 
         u_ref = [u(i*h,j*h,tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
         v_ref = [v(i*h,j*h,tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
-        p_ref = [p(i * h - 0.5 * h, j * h - 0.5 * h,tn + dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
+        p_ref = [p(i * h - 0.5 * h, j * h - 0.5 * h,tn + 0.5 * dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
+        p_ref .-= mean(p_ref) # zero mean constraint
 
         global uerror = u_n - u_ref
         plt = surface(abs.(uerror), aspect_ratio=:equal, c=:viridis, title="pointwise error of u")
@@ -298,35 +305,86 @@ for Tn in 10 : 100
     push!(pl_infs,plinf_error)
 
     plt = surface(abs.(pe), aspect_ratio=:equal, c=:viridis, title="pointwise error of pressure")
-    savefig(plt,"res4/pointwise_error/ppwe$Tn.png")
+    savefig(plt,"res3/pointwise_error/ppwe$Tn.png")
 
     plt = plot(dts,ul2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-    savefig(plt,"res4/udtvsl2.png")
+    savefig(plt,"res3/udtvsl2.png")
     plt = plot(dts,ul_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-    savefig(plt,"res4/udtvslinfty.png")
+    savefig(plt,"res3/udtvslinfty.png")
 
     line(k,x0,y0,x) = 2 .^(log2(y0) + k * (log2(x) - log2(x0)))
     plt = plot(dts,[ul2s,line.(1,dts[end],ul2s[end],dts),line.(2,dts[end],ul2s[end],dts), line.(3,dts[end],ul2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res4/udtvsl2loglog.png")
+    savefig(plt,"res3/udtvsl2loglog.png")
     plt = plot(dts,[ul_infs,line.(1,dts[end],ul_infs[end],dts),line.(2,dts[end],ul_infs[end],dts), line.(3,dts[end],ul_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res4/udtvslinftyloglog.png")
+    savefig(plt,"res3/udtvslinftyloglog.png")
 
     plt = plot(dts,vl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-    savefig(plt,"res4/vdtvsl2.png")
+    savefig(plt,"res3/vdtvsl2.png")
     plt = plot(dts,vl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-    savefig(plt,"res4/vdtvslinfty.png")
+    savefig(plt,"res3/vdtvslinfty.png")
     plt = plot(dts,[vl2s,line.(1,dts[end],vl2s[end],dts),line.(2,dts[end],vl2s[end],dts), line.(3,dts[end],vl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res4/vdtvsl2loglog.png")
+    savefig(plt,"res3/vdtvsl2loglog.png")
     plt = plot(dts,[vl_infs,line.(1,dts[end],vl_infs[end],dts),line.(2,dts[end],vl_infs[end],dts), line.(3,dts[end],vl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res4/vdtvslinftyloglog.png")
+    savefig(plt,"res3/vdtvslinftyloglog.png")
 
     plt = plot(dts,pl2s,title = L"dt vs $L_2$ Error", ylabel = L"relative $L_2$ error", xlabel = "dt",label= L"$l_2$ error",legend=:bottomright)
-    savefig(plt,"res4/pdtvsl2.png")
+    savefig(plt,"res3/pdtvsl2.png")
     plt = plot(dts,pl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
-    savefig(plt,"res4/pdtvslinfty.png")
+    savefig(plt,"res3/pdtvslinfty.png")
     plt = plot(dts,[pl2s,line.(1,dts[end],pl2s[end],dts),line.(2,dts[end],pl2s[end],dts), line.(3,dts[end],pl2s[end],dts)],title = L"dt vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res4/pdtvsl2loglog.png")
+    savefig(plt,"res3/pdtvsl2loglog.png")
     plt = plot(dts,[pl_infs,line.(1,dts[end],pl_infs[end],dts),line.(2,dts[end],pl_infs[end],dts), line.(3,dts[end],pl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
-    savefig(plt,"res4/pdtvslinftyloglog.png")
+    savefig(plt,"res3/pdtvslinftyloglog.png")
 end
 end 
+
+# hs = []
+# for gN in 10 : 100
+#     h = pi/(gN-1)
+#     println("h : ",h)
+#     @time begin
+#         ue, ul2error, ulinf_error, ve, vl2error, vlinf_error, pe, pl2error, plinf_error = solve_NS2D_projection(gN,100,T,false)
+#     end
+#     println("relative l2 for u: ", ul2error)
+#     println("relative l_inf for u: ", ulinf_error)
+#     println("relative l2 for v: ", vl2error)
+#     println("relative l_inf for v: ", vlinf_error)
+#     println("relative l2 for p: ", pl2error)
+#     println("relative l_inf for p ", plinf_error)
+#     push!(hs,h)
+#     push!(ul2s,ul2error)
+#     push!(ul_infs,ulinf_error)
+#     push!(vl2s,vl2error)
+#     push!(vl_infs,vlinf_error)
+#     push!(pl2s,pl2error)
+#     push!(pl_infs,plinf_error)
+
+#     plt = plot(hs,ul2s,title = L"h vs $L_2$ Error for u", ylabel = L"relative $L_2$ error", xlabel = "h",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res3/uhvsl2.png")
+#     plt = plot(hs,ul_infs,title = L"h vs $L_{\infty}$ Error for u", ylabel = L"relative $L_{\infty}$ error", xlabel = "h",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res3/uhvslinfty.png")
+
+#     line(k,x0,y0,x) = 2 .^(log2(y0) + k * (log2(x) - log2(x0)))
+#     plt = plot(hs,[ul2s,line.(1,hs[end],ul2s[end],hs),line.(2,hs[end],ul2s[end],hs), line.(3,hs[end],ul2s[end],hs)],title = L"h vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res3/uhvsl2loglog.png")
+#     plt = plot(hs,[ul_infs,line.(1,hs[end],ul_infs[end],hs),line.(2,hs[end],ul_infs[end],hs), line.(3,hs[end],ul_infs[end],hs)],title = L"h vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res3/uhvslinftyloglog.png")
+
+#     plt = plot(hs,vl2s,title = L"h vs $L_2$ Error for v", ylabel = L"relative $L_2$ error", xlabel = "h",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res3/vhvsl2.png")
+#     plt = plot(hs,vl_infs,title = L"h vs $L_{\infty}$ Error for v", ylabel = L"relative $L_{\infty}$ error", xlabel = "h",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res3/vhvslinfty.png")
+#     plt = plot(hs,[vl2s,line.(1,hs[end],vl2s[end],hs),line.(2,hs[end],vl2s[end],hs), line.(3,hs[end],vl2s[end],hs)],title = L"h vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res3/vhvsl2loglog.png")
+#     plt = plot(hs,[vl_infs,line.(1,hs[end],vl_infs[end],hs),line.(2,hs[end],vl_infs[end],hs), line.(3,hs[end],vl_infs[end],hs)],title = L"h vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res3/vhvslinftyloglog.png")
+
+#     plt = plot(hs,pl2s,title = L"h vs $L_2$ Error for pressure", ylabel = L"relative $L_2$ error", xlabel = "h",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res3/phvsl2.png")
+#     plt = plot(hs,pl_infs,title = L"h vs $L_{\infty}$ Error for pressure", ylabel = L"relative $L_{\infty}$ error", xlabel = "h",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res3/phvslinfty.png")
+#     plt = plot(hs,[pl2s,line.(1,hs[end],pl2s[end],hs),line.(2,hs[end],pl2s[end],hs), line.(3,hs[end],pl2s[end],hs)],title = L"h vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res3/phvsl2loglog.png")
+#     plt = plot(hs,[pl_infs,line.(1,hs[end],pl_infs[end],hs),line.(2,hs[end],pl_infs[end],hs), line.(3,hs[end],pl_infs[end],hs)],title = L"h vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res3/phvslinftyloglog.png")
+# end

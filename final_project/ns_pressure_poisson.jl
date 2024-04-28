@@ -5,6 +5,7 @@ using IterativeSolvers
 using SparseArrays
 using LaTeXStrings
 using Preconditioners
+using IncompleteLU
 using Statistics
 include("utilities.jl")
 using .MyUtil
@@ -57,16 +58,19 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
     Lp = Sp * Lp
     Lp = [Lp ones(p_grid_size*p_grid_size); ones(p_grid_size * p_grid_size)' 0]
     @assert issymmetric(Lp)
+    PreConLp = ilu(Lp,τ=0.1)
 
     # Set initial state
     u_n_1 = [u(i*h,j*h,0) for i in 1 : grid_size_in, j in 1 : grid_size_in]
     v_n_1 = [v(i*h,j*h,0) for i in 1 : grid_size_in, j in 1 : grid_size_in]
     u_n = [u(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
     v_n = [v(i*h,j*h,dt) for i in 1 : grid_size_in, j in 1 : grid_size_in]
-    p_n = [p((i-1)*h,(j-1)*h,0) for i in 1 : grid_size, j in 1 : grid_size]
-    p_n_2 = [p((i-1)*h,(j-1)*h,dt) for i in 1 : grid_size, j in 1 : grid_size]
+    p_n = [p((i-1)*h,(j-1)*h,dt) for i in 1 : grid_size, j in 1 : grid_size]
+    p_n .-= mean(p_n)
+    p_n_2 = p_n
 
     ul2e = ulinfe = vl2e = vlinfe = pl2e = plinfe =0
+    div = zeros(grid_size_in,grid_size_in)
     # Time marching
     for n in 1 : Tn
         tn = dt * n
@@ -140,7 +144,6 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
         u_rhs1 = zeros(grid_size_in,grid_size_in)
         v_rhs1 = zeros(grid_size_in,grid_size_in)
         p_rhs = zeros(grid_size,grid_size)
-        div = zeros(grid_size_in,grid_size_in)
 
         for it in 1 : max_iter
             if verbose
@@ -158,6 +161,11 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
                     p_n_half_right = (p_n_right + p_n_2_right)/2
                     p_n_half_down = (p_n_down + p_n_2_down)/2
                     p_n_half_up = (p_n_up + p_n_2_up)/2
+
+                    # p_n_half_left = p_n_2_left
+                    # p_n_half_right = p_n_2_right 
+                    # p_n_half_down = p_n_2_down 
+                    # p_n_half_up = p_n_2_up 
 
                     dpdx_n_half = (p_n_half_right - p_n_half_left)/(2*h)
                     dpdy_n_half = (p_n_half_up - p_n_half_down)/(2*h)
@@ -238,14 +246,15 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
             if verbose
                 println("div : ",norm(vec(div),Inf))
             end
-            #plt = surface(div, aspect_ratio=:equal, title="Divergence")
-            #display(plt)
 
             p_rhs_vec = Sp * vec(p_rhs)
-            p_star = cg(Lp,[p_rhs_vec;0])
+            p_star = cg(Lp,[p_rhs_vec;0],Pl = PreConLp,reltol = 1e-9)
             p_star = reshape(p_star[1:end-1],p_grid_size,p_grid_size)
             global p_n_2 = p_star
         end
+
+        plt = surface(div, aspect_ratio=:equal, c=:viridis, title="pointwise error of u")
+        savefig(plt,"res2/pointwise_error/div$Tn.png")
 
         global u_n_1 = u_n
         global v_n_1 = v_n
@@ -258,16 +267,17 @@ function solve_NS2D(grid_size, Tn,T, max_iter = 10, verbose = false)
         u_ref = [u(i*h,j*h, tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in ]
         v_ref = [v(i*h,j*h, tn + dt) for i in 1 : grid_size_in, j in 1 : grid_size_in ]
         p_ref = [p((i-1)* h,(j-1)*h,tn + dt) for i in 1 : p_grid_size, j in 1 : p_grid_size]
+        p_ref .-= mean(p_ref) # constraint zero mean
 
-        uerror = vec(u_n) - vec(u_ref)
+        uerror = vec(u_n_2) - vec(u_ref)
         ul2e = norm(uerror,2)/norm(u_ref,2) 
         ulinfe = norm(uerror,Inf)/norm(u_ref,Inf) 
-        verror = vec(v_n) - vec(v_ref)
+        verror = vec(v_n_2) - vec(v_ref)
         vl2e = norm(verror,2)/norm(v_ref,2)
         vlinfe = norm(verror,Inf)/norm(v_ref,Inf) 
-        perror = vec(p_n) - vec(p_ref)
-        pl2e = norm(perror,2)/norm(p_ref,2) - 0.0197
-        plinfe = norm(perror,Inf)/norm(p_ref,Inf) - 0.012
+        perror = vec(p_n_2) - vec(p_ref)
+        pl2e = norm(perror,2)/norm(p_ref,2) 
+        plinfe = norm(perror,Inf)/norm(p_ref,Inf) 
 
         if verbose
             println("t : ",tn)
@@ -293,10 +303,13 @@ pl_infs = []
 
 T = 1.0
 
+@time begin
 for Tn in 10 : 100
     dt = Float64(T) / Float64(Tn)
     println("dt : ",dt)
-    ul2error, ulinf_error, vl2error, vlinf_error, pl2error, plinf_error = solve_NS2D(101,Tn,T,3,false)
+    @time begin
+    ul2error, ulinf_error, vl2error, vlinf_error, pl2error, plinf_error = solve_NS2D(101,Tn,T,2,false)
+    end
     println("relative l2 for u: ", ul2error)
     println("relative l_inf for u: ", ulinf_error)
     println("relative l2 for v: ", vl2error)
@@ -340,6 +353,7 @@ for Tn in 10 : 100
     plt = plot(dts,[pl_infs,line.(1,dts[end],pl_infs[end],dts),line.(2,dts[end],pl_infs[end],dts), line.(3,dts[end],pl_infs[end],dts)],title = L"dt vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(dt)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
     savefig(plt,"res2/pdtvslinftyloglog.png")
 end
+end
 
 # ul2error1, ulinf_error1, vl2error1, vlinf_error1, pl2error1, plinf_error1 = solve_NS2D(101,100,T,1,false)
 # iterations = []
@@ -374,4 +388,55 @@ end
 #     savefig(plt,"res2/piterationvsl2.png")
 #     plt = plot(iterations,pl_infs,title = L"dt vs $L_{\infty}$ Error", ylabel = L"relative $L_{\infty}$ error", xlabel = "dt",label= L"$l_{\infty}$ error",legend=:bottomright)
 #     savefig(plt,"res2/piterationvslinfty.png")
+# end
+
+# hs = []
+# for gN in 10 : 100
+#     h = pi/(gN-1)
+#     println("h : ",h)
+#     @time begin
+#     ul2error, ulinf_error, vl2error, vlinf_error, pl2error, plinf_error = solve_NS2D(gN,100,T,3,false)
+#     end
+#     println("relative l2 for u: ", ul2error)
+#     println("relative l_inf for u: ", ulinf_error)
+#     println("relative l2 for v: ", vl2error)
+#     println("relative l_inf for v: ", vlinf_error)
+#     println("relative l2 for p: ", pl2error)
+#     println("relative l_inf for p ", plinf_error)
+#     push!(hs,h)
+#     push!(ul2s,ul2error)
+#     push!(ul_infs,ulinf_error)
+#     push!(vl2s,vl2error)
+#     push!(vl_infs,vlinf_error)
+#     push!(pl2s,pl2error)
+#     push!(pl_infs,plinf_error)
+
+#     plt = plot(hs,ul2s,title = L"h vs $L_2$ Error for u", ylabel = L"relative $L_2$ error", xlabel = "h",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res2/uhvsl2.png")
+#     plt = plot(hs,ul_infs,title = L"h vs $L_{\infty}$ Error for u", ylabel = L"relative $L_{\infty}$ error", xlabel = "h",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res2/uhvslinfty.png")
+
+#     line(k,x0,y0,x) = 2 .^(log2(y0) + k * (log2(x) - log2(x0)))
+#     plt = plot(hs,[ul2s,line.(1,hs[end],ul2s[end],hs),line.(2,hs[end],ul2s[end],hs), line.(3,hs[end],ul2s[end],hs)],title = L"h vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res2/uhvsl2loglog.png")
+#     plt = plot(hs,[ul_infs,line.(1,hs[end],ul_infs[end],hs),line.(2,hs[end],ul_infs[end],hs), line.(3,hs[end],ul_infs[end],hs)],title = L"h vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res2/uhvslinftyloglog.png")
+
+#     plt = plot(hs,vl2s,title = L"h vs $L_2$ Error for v", ylabel = L"relative $L_2$ error", xlabel = "h",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res2/vhvsl2.png")
+#     plt = plot(hs,vl_infs,title = L"h vs $L_{\infty}$ Error for v", ylabel = L"relative $L_{\infty}$ error", xlabel = "h",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res2/vhvslinfty.png")
+#     plt = plot(hs,[vl2s,line.(1,hs[end],vl2s[end],hs),line.(2,hs[end],vl2s[end],hs), line.(3,hs[end],vl2s[end],hs)],title = L"h vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res2/vhvsl2loglog.png")
+#     plt = plot(hs,[vl_infs,line.(1,hs[end],vl_infs[end],hs),line.(2,hs[end],vl_infs[end],hs), line.(3,hs[end],vl_infs[end],hs)],title = L"h vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res2/vhvslinftyloglog.png")
+
+#     plt = plot(hs,pl2s,title = L"h vs $L_2$ Error for pressure", ylabel = L"relative $L_2$ error", xlabel = "h",label= L"$l_2$ error",legend=:bottomright)
+#     savefig(plt,"res2/phvsl2.png")
+#     plt = plot(hs,pl_infs,title = L"h vs $L_{\infty}$ Error for pressure", ylabel = L"relative $L_{\infty}$ error", xlabel = "h",label= L"$l_{\infty}$ error",legend=:bottomright)
+#     savefig(plt,"res2/phvslinfty.png")
+#     plt = plot(hs,[pl2s,line.(1,hs[end],pl2s[end],hs),line.(2,hs[end],pl2s[end],hs), line.(3,hs[end],pl2s[end],hs)],title = L"h vs $L_2$ Error log-log", ylabel = L"log(relative $L_2$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_2$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res2/phvsl2loglog.png")
+#     plt = plot(hs,[pl_infs,line.(1,hs[end],pl_infs[end],hs),line.(2,hs[end],pl_infs[end],hs), line.(3,hs[end],pl_infs[end],hs)],title = L"h vs $L_{\infty}$ Error log-log", ylabel = L"log(relative $L_{\infty}$ error)", xlabel = "log(h)",xscale=:log2,yscale=:log2,label= [L"$l_{\infty}$ error" L"$O(t)$" L"$O(t^2)$" L"$O(t^3)$"],legend=:bottomright)
+#     savefig(plt,"res2/phvslinftyloglog.png")
 # end
